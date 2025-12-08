@@ -26,6 +26,7 @@ import {
   createToolCallFacet,
   isToolCallResultFacet,
 } from './types';
+import { getGlobalToolRegistry } from './tool-registry';
 
 /**
  * Default configuration for script execution
@@ -79,8 +80,11 @@ export class ScriptExecutorEffector extends Component {
   }
 
   onMount(): void {
-    // Try to get tool registry from space references
+    // Try to get tool registry from space references, fall back to global
     this.toolRegistry = this.getReference<IToolRegistry>('toolRegistry');
+    if (!this.toolRegistry) {
+      this.toolRegistry = getGlobalToolRegistry();
+    }
   }
 
   onUnmount(): void {
