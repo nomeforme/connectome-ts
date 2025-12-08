@@ -17,103 +17,28 @@ const LUA_OK = fengari.lua.LUA_OK;
  */
 export interface BuiltinsOptions {
   /**
-   * Custom log function. If not provided, uses console.log.
-   */
-  logFn?: (...args: unknown[]) => void;
-
-  /**
    * Whether to install json functions (encode/decode)
    * Default: true
    */
   enableJson?: boolean;
-
-  /**
-   * Whether to install the log function
-   * Default: true
-   */
-  enableLog?: boolean;
 }
 
 /**
  * Install built-in functions into a Lua sandbox.
  *
  * Built-ins:
- * - `log(...)` - Debug logging (synchronous, does not enter context)
+ * - `print(...)` - Debug logging (fengari's native implementation)
  * - `json.encode(t)` - Serialize table to JSON string
  * - `json.decode(s)` - Parse JSON string to table
- *
- * Note: `sleep` and `emit` are implemented as yielding tool-like functions
- * in the ScriptExecutor since they need async handling.
  */
 export function installBuiltins(sandbox: LuaSandbox, options: BuiltinsOptions = {}): void {
-  const {
-    logFn = (...args: unknown[]) => console.log('[Script]', ...args),
-    enableJson = true,
-    enableLog = true,
-  } = options;
+  const { enableJson = true } = options;
 
   const L = (sandbox as any).L;
-
-  // Install log function
-  if (enableLog) {
-    installLog(L, logFn);
-  }
 
   // Install json library
   if (enableJson) {
     installJson(L);
-  }
-}
-
-/**
- * Install the log function
- *
- * Uses fengari-interop's js.global to access a JavaScript function.
- * The sandbox already sets up the 'js' global via interop.luaopen_js().
- */
-function installLog(L: any, logFn: (...args: unknown[]) => void): void {
-  // Store the log function on globalThis so Lua can access it via js.global
-  // Return true to prevent fengari-interop from throwing on undefined return
-  (globalThis as any).__connectome_script_log = (msg: string) => {
-    logFn(msg);
-    return true;
-  };
-
-  // Create a Lua function that calls the JS function via js.global
-  // Note: fengari-interop requires method call syntax (:) to pass arguments
-  const logCode = `
-    -- Create log function that calls JS via fengari-interop
-    function log(...)
-      local n = select('#', ...)  -- Get actual count including nils
-      local strs = {}
-      for i = 1, n do
-        local v = select(i, ...)
-        if type(v) == 'table' then
-          strs[i] = _json_stringify_internal and _json_stringify_internal(v) or tostring(v)
-        else
-          strs[i] = tostring(v)
-        end
-      end
-      local msg = table.concat(strs, ' ')
-
-      -- Use method call syntax (:) to properly pass arguments via fengari-interop
-      -- Wrap in pcall to handle any fengari-interop quirks
-      local ok, err = pcall(function()
-        js.global:__connectome_script_log(msg)
-      end)
-      -- Ignore errors - the log already happened if we got this far
-    end
-
-    -- Also override print to use our log
-    print = log
-  `;
-
-  // Execute the Lua code to set up the log function
-  const status = lauxlib.luaL_dostring(L, to_luastring(logCode));
-  if (status !== LUA_OK) {
-    const err = to_jsstring(lua.lua_tostring(L, -1));
-    lua.lua_pop(L, 1);
-    throw new Error(`Failed to install log function: ${err}`);
   }
 }
 
@@ -355,5 +280,5 @@ function installJson(L: any): void {
  * Get a list of all built-in function names
  */
 export function getBuiltinNames(): string[] {
-  return ['log', 'print', 'json'];
+  return ['print', 'json'];
 }
