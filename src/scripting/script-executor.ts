@@ -80,10 +80,22 @@ export class ScriptExecutorEffector extends Component {
   }
 
   onMount(): void {
+    this.ensureToolRegistry();
+  }
+
+  /**
+   * Ensure tool registry is available (lazy initialization for when onMount is delayed)
+   */
+  private ensureToolRegistry(): void {
+    if (this.toolRegistry) return;
+
     // Try to get tool registry from space references, fall back to global
     this.toolRegistry = this.getReference<IToolRegistry>('toolRegistry');
     if (!this.toolRegistry) {
       this.toolRegistry = getGlobalToolRegistry();
+      console.log('[ScriptExecutor] Using global registry, tools:', this.toolRegistry?.getTools?.().map(t => t.name) || 'N/A');
+    } else {
+      console.log('[ScriptExecutor] Using reference registry, tools:', this.toolRegistry?.getTools?.().map(t => t.name) || 'N/A');
     }
   }
 
@@ -185,6 +197,9 @@ export class ScriptExecutorEffector extends Component {
     const actionState = facet.state as { toolName: string; parameters?: Record<string, any> };
     if (actionState.toolName !== 'lua') return;
 
+    // Ensure tool registry is available (may be delayed due to isRestoring=true)
+    this.ensureToolRegistry();
+
     const params = actionState.parameters || {};
     const code = params.content as string;
     if (!code) {
@@ -221,9 +236,13 @@ export class ScriptExecutorEffector extends Component {
 
     // Register tools from registry
     if (this.toolRegistry) {
-      for (const tool of this.toolRegistry.getTools()) {
+      const tools = this.toolRegistry.getTools();
+      console.log(`[ScriptExecutor] Registering ${tools.length} tools:`, tools.map(t => t.name));
+      for (const tool of tools) {
         sandbox.registerTool(tool.name, (...args) => args);
       }
+    } else {
+      console.log('[ScriptExecutor] No tool registry available!');
     }
 
     // Load the script
