@@ -22,7 +22,26 @@
 // Types
 export * from './types';
 
-// TODO: Export components as they are implemented
-// export { ScriptExecutorEffector } from './script-executor';
-// export { ToolRegistry } from './tool-registry';
-// export { createSandboxedLuaState } from './lua-sandbox';
+// Lua Sandbox
+export { LuaSandbox, createLuaSandbox, LuaExecutionResult } from './lua-sandbox';
+
+// Script Executor
+export { ScriptExecutorEffector, createScriptExecutor } from './script-executor';
+
+// Tool Registry
+export {
+  ToolRegistry,
+  ToolBuilder,
+  createToolRegistry,
+  getGlobalToolRegistry,
+  setGlobalToolRegistry,
+  scriptableTool,
+  extractScriptableTools,
+  // Conversion utilities for agent integration
+  toolDefinitionToScriptable,
+  toolDefinitionsToScriptable,
+  importToolDefinitions,
+} from './tool-registry';
+
+// Built-in Functions
+export { installBuiltins, getBuiltinNames, BuiltinsOptions } from './builtins';
