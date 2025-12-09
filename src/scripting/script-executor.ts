@@ -501,7 +501,8 @@ export class ScriptExecutorEffector extends Component {
       null,  // parentActionId
       script.result.success
         ? { success: true, result: (script.result as any).result, message: 'Script completed' }
-        : { success: false, error: (script.result as any).error || 'Script failed', message: 'Script failed' }
+        : { success: false, error: (script.result as any).error || 'Script failed', message: 'Script failed' },
+      script.streamId  // Pass streamId so agent response can be routed correctly
     );
     this.addOperation({ type: 'addFacet', facet: actionResultFacet });
 

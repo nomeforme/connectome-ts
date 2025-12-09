@@ -245,8 +245,9 @@ export class AgentComponent extends Component implements RestorableComponent {
         const result = resultFacet.result;
         const error = resultFacet.error;
         const actionId = resultFacet.actionId;
+        const resultStreamId = resultFacet.streamId;  // Capture streamId from action-result
 
-        console.log(`[AgentComponent] Action result received: ${actionId}, success: ${success}`);
+        console.log(`[AgentComponent] Action result received: ${actionId}, success: ${success}, streamId: ${resultStreamId}`);
 
         // Create activation so agent can see the result
         // Use emit() to trigger a new frame, not addOperation() which only adds to current frame
@@ -257,6 +258,8 @@ export class AgentComponent extends Component implements RestorableComponent {
             id: `activation-result-${resultId}`,
             priority: 'normal',
             source: 'action-result',
+            // Include streamId so agent response can be routed to correct channel
+            ...(resultStreamId ? { streamId: resultStreamId } : {}),
             metadata: {
               actionId,
               actionSuccess: success,
