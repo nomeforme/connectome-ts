@@ -197,6 +197,9 @@ export type ActionResultFacet = BaseFacet & {
 
   /** Human-readable description of what happened */
   message?: string;
+
+  /** Stream context from the original action (for routing agent response) */
+  streamId?: string;
 };
 
 // ============================================
@@ -528,13 +531,18 @@ export function createActionResultFacet(
   id: string,
   actionId: string,
   parentActionId: string | null,
-  outcome: { success: true; result?: unknown; message?: string } | { success: false; error: string; message?: string }
+  outcome: { success: true; result?: unknown; message?: string } | { success: false; error: string; message?: string },
+  streamId?: string
 ): ActionResultFacet {
-  return {
+  const facet: ActionResultFacet = {
     id,
     type: 'action-result',
     actionId,
     parentActionId,
     ...outcome,
   };
+  if (streamId) {
+    facet.streamId = streamId;
+  }
+  return facet;
 }

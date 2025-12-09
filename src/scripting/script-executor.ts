@@ -45,6 +45,7 @@ interface RunningScript {
   scriptId: string;
   agentId: string;
   agentName?: string;
+  streamId?: string;
   code: string;
   timeoutMs: number | null;
   parentScriptId: string | null;
@@ -208,9 +209,10 @@ export class ScriptExecutorEffector extends Component {
       return;
     }
 
-    // Get agent info from facet
+    // Get agent info and stream context from facet
     const agentId = (facet as any).agentId || 'unknown';
     const agentName = (facet as any).agentName;
+    const streamId = (facet as any).streamId;
 
     // Calculate timeout
     let timeoutMs: number | null = this.config.defaultTimeoutMs;
@@ -289,6 +291,7 @@ export class ScriptExecutorEffector extends Component {
       scriptId,
       agentId,
       agentName,
+      streamId,
       code,
       timeoutMs,
       parentScriptId: params.parentScriptId || null,
