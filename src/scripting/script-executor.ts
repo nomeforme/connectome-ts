@@ -24,6 +24,7 @@ import {
   createScriptExecutionFacet,
   createScriptResultFacet,
   createToolCallFacet,
+  createActionResultFacet,
   isToolCallResultFacet,
 } from './types';
 import { getGlobalToolRegistry } from './tool-registry';
@@ -474,7 +475,7 @@ export class ScriptExecutorEffector extends Component {
   }
 
   /**
-   * Finalize a completed script (create result facet and emit event)
+   * Finalize a completed script (create result facets)
    */
   private finalizeScript(script: RunningScript): void {
     if (!script.result) return;
@@ -489,19 +490,22 @@ export class ScriptExecutorEffector extends Component {
       },
     });
 
-    // Create result facet
+    // Create unified action-result facet (triggers agent re-activation)
+    const actionResultId = `action-result:${script.scriptId}`;
+    const actionResultFacet = createActionResultFacet(
+      actionResultId,
+      script.scriptId,  // actionId = scriptId for lua scripts
+      null,  // parentActionId
+      script.result.success
+        ? { success: true, result: (script.result as any).result, message: 'Script completed' }
+        : { success: false, error: (script.result as any).error || 'Script failed', message: 'Script failed' }
+    );
+    this.addOperation({ type: 'addFacet', facet: actionResultFacet });
+
+    // Also create script-specific result facet (for backwards compatibility)
     const resultId = `script-result:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const resultFacet = createScriptResultFacet(resultId, script.scriptId, script.result);
     this.addOperation({ type: 'addFacet', facet: resultFacet });
-
-    // Emit completion event
-    this.emit({
-      topic: 'script:completed',
-      payload: {
-        scriptId: script.scriptId,
-        success: script.result.success,
-      },
-    });
   }
 
   /**
