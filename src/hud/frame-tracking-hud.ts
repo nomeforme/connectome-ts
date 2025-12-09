@@ -1244,18 +1244,20 @@ export class FrameTrackingHUD implements CompressibleHUD {
   }
   
   private renderToolCall(toolName: string, parameters: any): string {
-    const parts = [`<tool_call name="${toolName}">`];
+    // Render as <action> to match what the agent writes
+    const parts = [`<action name="${toolName}">`];
 
     for (const [key, value] of Object.entries(parameters)) {
       parts.push(`<parameter name="${key}">${this.escapeXml(String(value))}</parameter>`);
     }
 
-    parts.push('</tool_call>');
+    parts.push('</action>');
     return parts.join('\n');
   }
 
   private renderToolResult(actionId: string, success: boolean, result: unknown, error?: string, message?: string): string {
-    const parts = [`<tool_result action_id="${this.escapeXml(actionId)}" success="${success}">`];
+    // Render as <action_result> to pair with <action>
+    const parts = [`<action_result action_id="${this.escapeXml(actionId)}" success="${success}">`];
 
     if (success) {
       if (result !== undefined) {
@@ -1274,7 +1276,7 @@ export class FrameTrackingHUD implements CompressibleHUD {
       }
     }
 
-    parts.push('</tool_result>');
+    parts.push('</action_result>');
     return parts.join('\n');
   }
 
