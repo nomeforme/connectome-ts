@@ -657,8 +657,8 @@ export class FrameTrackingHUD implements CompressibleHUD {
             }
           }
           replayedState.set(facet.id, facet);
-          break;
-        }
+              break;
+            }
 
         case 'rewriteFacet': {
           if (removals?.get(operation.id) === 'delete') break;
@@ -668,7 +668,7 @@ export class FrameTrackingHUD implements CompressibleHUD {
           
           const updatedFacet = this.mergeFacetChanges(currentFacet, operation.changes);
           const rendered = this.renderFacet(updatedFacet, renderMode);
-          if (rendered) {
+            if (rendered) {
             renderedStates.set(operation.id, { 
               content: rendered, 
               facetId: operation.id, 
@@ -677,11 +677,11 @@ export class FrameTrackingHUD implements CompressibleHUD {
             });
           }
           replayedState.set(operation.id, updatedFacet);
-            break;
+          break;
           }
             
         case 'removeFacet':
-          break;
+              break;
       }
     }
 
@@ -807,7 +807,7 @@ export class FrameTrackingHUD implements CompressibleHUD {
           }
           if (facet.type === 'state') {
             const rendered = this.renderFacet(facet);
-            if (rendered) {
+              if (rendered) {
               renderedStates.set(facet.id, rendered);
             }
           }
@@ -838,23 +838,23 @@ export class FrameTrackingHUD implements CompressibleHUD {
           break;
       }
     }
-
+    
     for (const operation of frame.deltas) {
       switch (operation.type) {
         case 'addFacet': {
           const facet = operation.facet;
           if (!facet) {
             console.error('[FrameTrackingHUD] Invalid addFacet operation in second pass - missing facet:', operation);
-          break;
-      }
+            break;
+          }
           if (removals?.has(facet.id)) {
             break;
           }
-
+            
           if (renderedStates.has(facet.id)) {
             const finalRendering = renderedStates.get(facet.id);
-            if (finalRendering) {
-              parts.push(finalRendering);
+              if (finalRendering) {
+                parts.push(finalRendering);
             }
             renderedStates.delete(facet.id);
             break;
@@ -863,15 +863,15 @@ export class FrameTrackingHUD implements CompressibleHUD {
           const rendered = this.renderFacet(facet);
           if (rendered) {
             parts.push(rendered);
-          }
+            }
           break;
         }
-
+          
         case 'rewriteFacet': {
           if (removals?.has(operation.id)) {
             break;
           }
-
+          
           const finalRendering = renderedStates.get(operation.id);
           if (finalRendering) {
             parts.push(finalRendering);
@@ -896,7 +896,7 @@ export class FrameTrackingHUD implements CompressibleHUD {
         }
       }
     }
-
+    
     return parts.join('\n');
   }
   

@@ -212,7 +212,7 @@ export class BasicAgent implements AgentInterface {
         {
           maxTokens: this.config.defaultMaxTokens || 1000,
           temperature: this.config.defaultTemperature || 1.0,
-          stopSequences: ['</my_turn>'],
+          stopSequences: ['</my_turn>', '</function_calls>'],
           formatConfig: {
             assistant: {
               prefix: '<my_turn>\n',

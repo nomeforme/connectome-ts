@@ -274,3 +274,22 @@ This is the most architecturally sound solution because:
 *Discussion: Olena & Claude*  
 *Status: Proposal - Not Yet Implemented*
 
+## Related: frame:start Removal
+
+**Issue**: `frame:start` is a meta-event that components subscribe to for initialization workarounds.
+
+**Problems:**
+- Components shouldn't know about frame lifecycle
+- Delivered during frame processing (timing fragility)
+- Used as hack for "when can I create facets?"
+- Component deltas added during `frame:start` were being lost (now fixed but fragile)
+
+**Proper Solutions:**
+- Receptor pattern for initialization
+- Component lifecycle hooks that run at proper phase boundaries
+- Remove `frame:start` entirely
+
+**Priority**: Medium - current workaround functional but should be cleaned up
+
+---
+
