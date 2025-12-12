@@ -18,6 +18,12 @@ import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
 export interface ContextTransformConfig {
   compressionEngine?: CompressionEngine;
   defaultOptions?: Partial<HUDConfig>;
+  /**
+   * Enable thinking mode prefill for chain-of-thought reasoning
+   * When enabled, prefills with <thinking> tag to encourage visible reasoning
+   * NOTE: This is NOT Anthropic's Extended Thinking API, just prefill-based CoT
+   */
+  enableThinkingMode?: boolean;
 }
 
 export class ContextTransform extends Component {
@@ -26,11 +32,13 @@ export class ContextTransform extends Component {
   private hud: FrameTrackingHUD;
   private compressionEngine?: CompressionEngine;
   private defaultOptions?: Partial<HUDConfig>;
+  private enableThinkingMode: boolean;
   
   constructor(config: ContextTransformConfig = {}) {
     super();
     this.compressionEngine = config.compressionEngine;
     this.defaultOptions = config.defaultOptions;
+    this.enableThinkingMode = config.enableThinkingMode ?? false;
     this.hud = new FrameTrackingHUD();
   }
 
@@ -145,13 +153,28 @@ export class ContextTransform extends Component {
       };
     }
     
+    // Check if thinking mode should be enabled
+    // Priority: activation state > transform config > default options
+    const thinkingEnabled = activationState.enableThinkingMode 
+      ?? this.enableThinkingMode 
+      ?? this.defaultOptions?.formatConfig?.thinking?.enabled 
+      ?? false;
+    
     // Format configuration for agent output
     if (activationState.targetAgentId) {
       options.formatConfig = {
         assistant: {
           prefix: '<my_turn>\n',
           suffix: '\n</my_turn>'
-        }
+        },
+        // Add thinking configuration if enabled
+        ...(thinkingEnabled && {
+          thinking: {
+            enabled: true,
+            openTag: '<thinking>\n',
+            closeTag: '\n</thinking>\n'
+          }
+        })
       };
     }
 
