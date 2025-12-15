@@ -277,15 +277,6 @@ export class ScriptExecutorEffector extends Component {
     // Add the script facet
     this.addOperation({ type: 'addFacet', facet: scriptFacet });
 
-    // Emit script created event
-    this.emit({
-      topic: 'script:created',
-      payload: {
-        scriptId,
-        parentScriptId: scriptFacet.parentScriptId,
-      },
-    });
-
     // Create running script entry
     const runningScript: RunningScript = {
       scriptId,
@@ -414,16 +405,6 @@ export class ScriptExecutorEffector extends Component {
 
     // Store pending tool call ID
     script.pendingToolCallId = toolCallId;
-
-    // Emit tool call event
-    this.emit({
-      topic: 'tool-call:created',
-      payload: {
-        toolCallId,
-        parentScriptId: script.scriptId,
-        toolName,
-      },
-    });
   }
 
   /**

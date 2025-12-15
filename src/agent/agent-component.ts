@@ -302,7 +302,8 @@ export class AgentComponent extends Component implements RestorableComponent {
   private async runAgentCycle(
     context: RenderedContext,
     streamRef?: StreamRef,
-    activationId?: string
+    activationId?: string,
+    streamId?: string
   ): Promise<{ facets: Facet[]; events: SpaceEvent[] }> {
     const facets: Facet[] = [];
 
@@ -317,7 +318,7 @@ export class AgentComponent extends Component implements RestorableComponent {
     // Convert agent operations to facets
     for (const operation of outgoingFrame.deltas) {
       if (operation.type === 'addFacet') {
-        const preparedFacet = this.prepareAgentFacet(operation.facet, streamRef);
+        const preparedFacet = this.prepareAgentFacet(operation.facet, streamRef, streamId);
         facets.push(preparedFacet);
       }
     }
@@ -325,7 +326,7 @@ export class AgentComponent extends Component implements RestorableComponent {
     return { facets, events: outgoingFrame.events || [] };
   }
 
-  private prepareAgentFacet(facet: Facet, streamRef?: StreamRef): Facet {
+  private prepareAgentFacet(facet: Facet, streamRef?: StreamRef, streamId?: string): Facet {
     const prepared = { ...facet } as Facet;
 
     if (hasAgentGeneratedAspect(prepared) && !prepared.agentId) {
