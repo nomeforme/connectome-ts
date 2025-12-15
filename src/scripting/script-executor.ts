@@ -252,7 +252,7 @@ export class ScriptExecutorEffector extends Component {
     try {
       sandbox.loadScript(code);
     } catch (error: any) {
-      // Syntax error - create result immediately
+      // Syntax error - create both result facets immediately
       const resultId = `script-result:${Date.now()}`;
       this.addOperation({
         type: 'addFacet',
@@ -262,6 +262,20 @@ export class ScriptExecutorEffector extends Component {
           errorType: 'lua-error',
         }),
       });
+
+      // Also create action-result facet to trigger re-activation
+      const actionResultId = `action-result:${scriptId}`;
+      this.addOperation({
+        type: 'addFacet',
+        facet: createActionResultFacet(
+          actionResultId,
+          scriptId,
+          null,  // parentActionId
+          { success: false, error: error.message, message: 'Script syntax error' },
+          streamId  // Pass streamId for routing
+        ),
+      });
+
       sandbox.destroy();
       return;
     }

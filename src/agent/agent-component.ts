@@ -248,7 +248,7 @@ export class AgentComponent extends Component implements RestorableComponent {
   ): void {
     (async () => {
       try {
-        const response = await this.runAgentCycle(context, streamRef, activationId);
+        const response = await this.runAgentCycle(context, streamRef, activationId, streamId);
 
         // Emit events first (they may trigger actions)
         for (const event of response.events) {
@@ -328,6 +328,8 @@ export class AgentComponent extends Component implements RestorableComponent {
 
   private prepareAgentFacet(facet: Facet, streamRef?: StreamRef, streamId?: string): Facet {
     const prepared = { ...facet } as Facet;
+    // Effective streamId: prefer streamRef.streamId, fall back to plain streamId
+    const effectiveStreamId = streamRef?.streamId || streamId;
 
     if (hasAgentGeneratedAspect(prepared) && !prepared.agentId) {
       prepared.agentId = this.id;
@@ -335,26 +337,26 @@ export class AgentComponent extends Component implements RestorableComponent {
 
     if ((prepared.type === 'speech' || prepared.type === 'thought' || prepared.type === 'action') && !hasAgentGeneratedAspect(prepared)) {
       (prepared as Facet & { agentId: string }).agentId = this.id;
-      if (streamRef?.streamId) {
-        (prepared as Facet & { streamId: string }).streamId = streamRef.streamId;
+      if (effectiveStreamId) {
+        (prepared as Facet & { streamId: string }).streamId = effectiveStreamId;
       }
     }
 
-    if (streamRef?.streamId && hasStreamAspect(prepared)) {
-      prepared.streamId = prepared.streamId || streamRef.streamId;
+    if (effectiveStreamId && hasStreamAspect(prepared)) {
+      prepared.streamId = prepared.streamId || effectiveStreamId;
     }
 
     if (prepared.type === 'speech' || prepared.type === 'thought') {
       if (!hasContentAspect(prepared)) {
         (prepared as Facet & { content: string }).content = '';
       }
-      if (!prepared.streamId && streamRef?.streamId) {
-        (prepared as Facet & { streamId: string }).streamId = streamRef.streamId;
+      if (!prepared.streamId && effectiveStreamId) {
+        (prepared as Facet & { streamId: string }).streamId = effectiveStreamId;
       }
     }
 
-    if (prepared.type === 'action' && hasStateAspect(prepared) && streamRef?.streamId) {
-      prepared.streamId = prepared.streamId || streamRef.streamId;
+    if (prepared.type === 'action' && hasStateAspect(prepared) && effectiveStreamId) {
+      prepared.streamId = prepared.streamId || effectiveStreamId;
     }
 
     return prepared;
