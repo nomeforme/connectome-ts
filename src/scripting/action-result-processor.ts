@@ -1,16 +1,20 @@
 /**
- * ActionResultProcessor - FLEX Maintainer that creates activations from action-results
+ * ActionResultProcessor - FLEX Maintainer that emits activation:create events from action-results
  *
  * Runs at MAINTAINER priority (400) to ensure it sees all action-results added
  * by Effectors (priority 300) in the current frame. Batches multiple results
- * into a single activation to avoid overwhelming the agent.
+ * into a single activation event to avoid overwhelming the agent.
+ *
+ * NOTE: This component emits semantic `activation:create` events instead of
+ * `veil:operation` events. The ActivationReceptor handles these events and
+ * creates the actual agent-activation facets. This follows the proper FLEX
+ * pattern: events trigger frames → receptors create facets.
  */
 
 import { Component } from '../spaces/component';
 import { ExecutionContext } from '../spaces/types';
 import { FacetFilter } from '../spaces/receptor-effector-types';
 import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
-import { createAgentActivation } from '../helpers/factories';
 import { ActionResultFacet } from './types';
 
 export class ActionResultProcessor extends Component {
@@ -65,30 +69,24 @@ export class ActionResultProcessor extends Component {
       message: r.message
     }));
 
-    const activation = createAgentActivation(reason, {
-      id: `activation-results-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      priority: 'normal',
-      source: 'action-result',
-      ...(streamId ? { streamId } : {}),
-      metadata: {
-        resultCount: results.length,
-        successCount,
-        failCount,
-        results: resultSummaries,
-        reason: successCount === results.length ? 'actions_completed' : 'actions_mixed'
-      }
-    });
+    console.log(`[ActionResultProcessor] Emitting activation:create for ${results.length} action result(s), streamId: ${streamId}`);
 
-    console.log(`[ActionResultProcessor] Creating activation for ${results.length} action result(s), streamId: ${streamId}`);
-
-    // Emit as veil:operation event to trigger a new frame
+    // Emit semantic activation:create event (triggers new frame, ActivationReceptor creates facet)
     this.emit({
-      topic: 'veil:operation',
+      topic: 'activation:create',
       timestamp: Date.now(),
       payload: {
-        operation: {
-          type: 'addFacet',
-          facet: activation
+        reason,
+        id: `activation-results-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        priority: 'normal',
+        source: 'action-result',
+        streamId,
+        metadata: {
+          resultCount: results.length,
+          successCount,
+          failCount,
+          results: resultSummaries,
+          reason: successCount === results.length ? 'actions_completed' : 'actions_mixed'
         }
       }
     });

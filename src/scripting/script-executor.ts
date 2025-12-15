@@ -11,6 +11,7 @@
 
 import { Component } from '../spaces/component';
 import { ExecutionContext } from '../spaces/types';
+import { ReadonlyVEILState } from '../spaces/receptor-effector-types';
 import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
 import { Facet, hasStateAspect } from '../veil/types';
 import { LuaSandbox, createLuaSandbox, LuaExecutionResult } from './lua-sandbox';
@@ -65,6 +66,9 @@ interface RunningScript {
 export class ScriptExecutorEffector extends Component {
   constraints = [priorityConstraint(ComponentPriority.EFFECTOR)];
 
+  // Subscribe to tool-call:completed events (triggers frames for script resumption)
+  topics = ['tool-call:completed'];
+
   private config: Required<ScriptExecutionConfig>;
   private runningScripts: Map<string, RunningScript> = new Map();
   private toolRegistry?: IToolRegistry;
@@ -113,48 +117,25 @@ export class ScriptExecutorEffector extends Component {
   }
 
   /**
-   * FLEX execute - process frame for lua actions and tool results
+   * FLEX execute - process frame for lua actions and tool-call:completed events
    */
   execute(context: ExecutionContext): void {
-    const { frame, state } = context;
+    const { frame, state, event } = context;
     if (!frame?.deltas) return;
 
-    // Track which deltas we've processed
-    const processedDeltaIds = new Set<string>();
+    // 1. Handle tool-call:completed events (event-driven script resumption)
+    if (event?.topic === 'tool-call:completed') {
+      this.handleToolCallCompletedEvent(event, state);
+    }
 
-    // 1. Process new lua action facets from frame deltas
+    // 2. Process new lua action facets from frame deltas
     for (const delta of frame.deltas) {
       if (delta.type === 'addFacet' && delta.facet.type === 'action') {
-        processedDeltaIds.add(delta.facet.id);
         this.handleActionFacet(delta.facet);
       }
     }
 
-    // 2. Process tool call results from frame deltas
-    for (const delta of frame.deltas) {
-      if (delta.type === 'addFacet' && isToolCallResultFacet(delta.facet)) {
-        processedDeltaIds.add(delta.facet.id);
-        this.handleToolCallResult(delta.facet);
-      }
-    }
-
-    // 3. Also check VEIL state for tool-call-results we might have missed
-    // (added by other components earlier in this frame)
-    if (state?.facets) {
-      for (const [facetId, facet] of state.facets) {
-        if (isToolCallResultFacet(facet) && !processedDeltaIds.has(facetId)) {
-          // Check if any running script is waiting for this
-          for (const script of this.runningScripts.values()) {
-            if (script.pendingToolCallId === facet.toolCallId && !script.needsResume && !script.completed) {
-              this.handleToolCallResult(facet);
-              break;
-            }
-          }
-        }
-      }
-    }
-
-    // 4. Process any scripts that need to start or resume
+    // 3. Process any scripts that need to start or resume
     for (const [, script] of this.runningScripts) {
       if (script.completed) continue;
 
@@ -168,7 +149,7 @@ export class ScriptExecutorEffector extends Component {
       }
     }
 
-    // 5. Finalize completed scripts
+    // 4. Finalize completed scripts
     const completedScriptIds: string[] = [];
     for (const [scriptId, script] of this.runningScripts) {
       if (script.completed && script.result) {
@@ -188,6 +169,73 @@ export class ScriptExecutorEffector extends Component {
         this.runningScripts.delete(scriptId);
       }
     }
+  }
+
+  /**
+   * Handle tool-call:completed event - find the result facet and mark script for resume
+   */
+  private handleToolCallCompletedEvent(event: any, state: ReadonlyVEILState): void {
+    const { toolCallId, parentScriptId, success } = event.payload || {};
+    if (!toolCallId || !parentScriptId) return;
+
+    // Find the running script waiting for this tool call
+    const script = this.runningScripts.get(parentScriptId);
+    if (!script) {
+      // Script may have timed out or been cancelled
+      return;
+    }
+
+    if (script.pendingToolCallId !== toolCallId) {
+      // Not the tool call we're waiting for
+      return;
+    }
+
+    // Look up the result facet from VEIL state
+    const resultFacet = this.findToolCallResultFacet(toolCallId, state);
+
+    // Clear pending tool call
+    script.pendingToolCallId = undefined;
+
+    // Mark for resume
+    if (resultFacet && resultFacet.success) {
+      script.needsResume = true;
+      script.resumeValue = resultFacet.result;
+    } else if (resultFacet) {
+      // Tool call failed - complete script with error
+      script.completed = true;
+      script.result = {
+        success: false,
+        error: resultFacet.error || 'Tool call failed',
+        errorType: 'tool-error',
+      };
+    } else {
+      // No result facet found - use event success flag
+      if (success) {
+        script.needsResume = true;
+        script.resumeValue = undefined;
+      } else {
+        script.completed = true;
+        script.result = {
+          success: false,
+          error: 'Tool call failed (no result facet)',
+          errorType: 'tool-error',
+        };
+      }
+    }
+  }
+
+  /**
+   * Find a tool-call-result facet in VEIL state by toolCallId
+   */
+  private findToolCallResultFacet(toolCallId: string, state: ReadonlyVEILState): ToolCallResultFacet | undefined {
+    if (!state?.facets) return undefined;
+
+    for (const facet of state.facets.values()) {
+      if (isToolCallResultFacet(facet) && facet.toolCallId === toolCallId) {
+        return facet;
+      }
+    }
+    return undefined;
   }
 
   /**
@@ -438,42 +486,6 @@ export class ScriptExecutorEffector extends Component {
         toolName,
       },
     });
-  }
-
-  /**
-   * Handle tool call result - mark script for resume
-   */
-  private handleToolCallResult(resultFacet: ToolCallResultFacet): void {
-    // Find the running script waiting for this tool call
-    const scriptId = resultFacet.parentScriptId;
-    const script = this.runningScripts.get(scriptId);
-
-    if (!script) {
-      // Script may have timed out or been cancelled
-      return;
-    }
-
-    if (script.pendingToolCallId !== resultFacet.toolCallId) {
-      // Not the tool call we're waiting for
-      return;
-    }
-
-    // Clear pending tool call
-    script.pendingToolCallId = undefined;
-
-    // Mark for resume
-    if (resultFacet.success) {
-      script.needsResume = true;
-      script.resumeValue = resultFacet.result;
-    } else {
-      // Tool call failed - complete script with error
-      script.completed = true;
-      script.result = {
-        success: false,
-        error: resultFacet.error || 'Tool call failed',
-        errorType: 'tool-error',
-      };
-    }
   }
 
   /**

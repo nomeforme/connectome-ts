@@ -16,6 +16,11 @@ import { ConsoleChatComponent } from './elements/console-chat';
 import { SpaceNotesComponent } from './components/space-notes';
 import { AxonLoaderComponent } from './components/axon-loader';
 
+// Scripting components (FLEX architecture)
+import { ScriptExecutorEffector } from './scripting/script-executor';
+import { ActionResultProcessor } from './scripting/action-result-processor';
+import { ActivationReceptor } from './scripting/activation-receptor';
+
 // Register core components
 ComponentRegistry.register('AgentComponent', AgentComponent);
 ComponentRegistry.register('AgentEffector', AgentComponent); // Backwards compatibility alias
@@ -24,6 +29,11 @@ ComponentRegistry.register('ContextTransform', ContextTransform);
 ComponentRegistry.register('ConsoleChatComponent', ConsoleChatComponent);
 ComponentRegistry.register('SpaceNotesComponent', SpaceNotesComponent);
 ComponentRegistry.register('AxonLoaderComponent', AxonLoaderComponent);
+
+// Scripting components
+ComponentRegistry.register('ScriptExecutorEffector', ScriptExecutorEffector);
+ComponentRegistry.register('ActionResultProcessor', ActionResultProcessor);
+ComponentRegistry.register('ActivationReceptor', ActivationReceptor);
 
 // Temporary: Register test components
 // TODO: Move these to AXON extensions
