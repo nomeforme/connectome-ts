@@ -28,6 +28,9 @@ export { LuaSandbox, createLuaSandbox, LuaExecutionResult } from './lua-sandbox'
 // Script Executor
 export { ScriptExecutorEffector, createScriptExecutor } from './script-executor';
 
+// Action Result Processor (Maintainer that creates activations from action-results)
+export { ActionResultProcessor } from './action-result-processor';
+
 // Tool Registry
 export {
   ToolRegistry,

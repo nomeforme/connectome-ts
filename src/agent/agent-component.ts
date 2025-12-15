@@ -34,17 +34,16 @@ import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
 export class AgentComponent extends Component implements RestorableComponent {
   constraints = [priorityConstraint(ComponentPriority.EFFECTOR)];
 
-  // Watch for activation facets, rendered contexts, and action results
+  // Watch for activation facets and rendered contexts
+  // (action-result handling moved to ActionResultProcessor at MAINTAINER priority)
   facetFilters: FacetFilter[] = [
     { type: 'agent-activation' },
-    { type: 'rendered-context' },
-    { type: 'action-result' }
+    { type: 'rendered-context' }
   ];
 
   private agent?: AgentInterface;
   private agentRegistered = false;
   private processingActivations = new Set<string>();
-  private processedActionResults = new Set<string>();
   private tracer?: TraceStorage;
 
   // Persist the agent configuration
@@ -233,55 +232,7 @@ export class AgentComponent extends Component implements RestorableComponent {
 
         this.runAgentCycleBackground(context, streamRef, activationId, streamId);
       }
-
-      // Handle action-result facets - create activation so agent sees the result
-      if (change.facet.type === 'action-result') {
-        const resultId = change.facet.id;
-        if (this.processedActionResults.has(resultId)) continue;
-        this.processedActionResults.add(resultId);
-
-        const resultFacet = change.facet as any;
-        const success = resultFacet.success;
-        const result = resultFacet.result;
-        const error = resultFacet.error;
-        const actionId = resultFacet.actionId;
-        const resultStreamId = resultFacet.streamId;  // Capture streamId from action-result
-
-        console.log(`[AgentComponent] Action result received: ${actionId}, success: ${success}, streamId: ${resultStreamId}`);
-
-        // Create activation so agent can see the result
-        // Use emit() to trigger a new frame, not addOperation() which only adds to current frame
-        const { createAgentActivation } = require('../helpers/factories');
-        const activation = createAgentActivation(
-          success ? 'Action completed' : `Action failed: ${error}`,
-          {
-            id: `activation-result-${resultId}`,
-            priority: 'normal',
-            source: 'action-result',
-            // Include streamId so agent response can be routed to correct channel
-            ...(resultStreamId ? { streamId: resultStreamId } : {}),
-            metadata: {
-              actionId,
-              actionSuccess: success,
-              actionResult: result,
-              actionError: error,
-              reason: success ? 'action_completed' : 'action_failed'
-            }
-          }
-        );
-
-        // Emit as veil:operation event to trigger a new frame for this activation
-        this.emit({
-          topic: 'veil:operation',
-          timestamp: Date.now(),
-          payload: {
-            operation: {
-              type: 'addFacet',
-              facet: activation
-            }
-          }
-        });
-      }
+      // Note: action-result handling moved to ActionResultProcessor (MAINTAINER priority)
     }
   }
 
