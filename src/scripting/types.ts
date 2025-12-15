@@ -203,13 +203,74 @@ export type ActionResultFacet = BaseFacet & {
 };
 
 // ============================================
-// EVENTS (removed - facet-based processing is used instead)
+// EVENTS
 // ============================================
-// Script and tool-call events were removed as they were vestigial.
-// All processing now happens via facets:
-// - tool-call facet → ToolCallHandler
-// - tool-call-result facet → ScriptExecutorEffector (resume)
-// - action-result facet → ActionResultProcessor (activation)
+
+/**
+ * Emitted when a script execution is created
+ */
+export interface ScriptCreatedEvent {
+  topic: 'script:created';
+  scriptId: string;
+  parentScriptId: string | null;
+}
+
+/**
+ * Emitted when a script completes (result facet created)
+ */
+export interface ScriptCompletedEvent {
+  topic: 'script:completed';
+  scriptId: string;
+  success: boolean;
+}
+
+/**
+ * Emitted when a tool call is created by a script
+ */
+export interface ToolCallCreatedEvent {
+  topic: 'tool-call:created';
+  toolCallId: string;
+  parentScriptId: string;
+  toolName: string;
+}
+
+/**
+ * Emitted when a tool call completes (result facet created)
+ */
+export interface ToolCallCompletedEvent {
+  topic: 'tool-call:completed';
+  toolCallId: string;
+  parentScriptId: string;
+  success: boolean;
+}
+
+/**
+ * Generic action events (for non-script actions)
+ */
+export interface ActionCreatedEvent {
+  topic: 'action:created';
+  actionId: string;
+  actionName: string;
+  parentActionId: string | null;
+}
+
+export interface ActionCompletedEvent {
+  topic: 'action:completed';
+  actionId: string;
+  parentActionId: string | null;
+  success: boolean;
+}
+
+/**
+ * Union of all scripting-related events
+ */
+export type ScriptingEvent =
+  | ScriptCreatedEvent
+  | ScriptCompletedEvent
+  | ToolCallCreatedEvent
+  | ToolCallCompletedEvent
+  | ActionCreatedEvent
+  | ActionCompletedEvent;
 
 // ============================================
 // TOOL REGISTRY
