@@ -1,14 +1,15 @@
 /**
- * ActionResultProcessor - FLEX Maintainer that emits activation:create events from action-results
+ * ActionResultProcessor - FLEX Maintainer that emits action:completed events from action-results
  *
  * Runs at MAINTAINER priority (400) to ensure it sees all action-results added
  * by Effectors (priority 300) in the current frame. Batches multiple results
- * into a single activation event to avoid overwhelming the agent.
+ * into a single event.
  *
- * NOTE: This component emits semantic `activation:create` events instead of
- * `veil:operation` events. The ActivationReceptor handles these events and
- * creates the actual agent-activation facets. This follows the proper FLEX
- * pattern: events trigger frames → receptors create facets.
+ * NOTE: This component emits semantic `action:completed` events - describing
+ * what happened, not what to do about it. The ActivationDeciderTransform
+ * (priority 200, runs next frame) decides whether to activate the agent.
+ *
+ * FLEX pattern: Events are semantic (what happened), Transforms decide policy.
  */
 
 import { Component } from '../spaces/component';
@@ -44,23 +45,14 @@ export class ActionResultProcessor extends Component {
 
     if (results.length === 0) return;
 
-    // Batch results into a single activation
+    // Batch results
     const successCount = results.filter(r => r.success).length;
     const failCount = results.length - successCount;
-
-    // Determine activation reason
-    let reason: string;
-    if (results.length === 1) {
-      const r = results[0];
-      reason = r.success ? 'Action completed' : `Action failed: ${r.error}`;
-    } else {
-      reason = `${results.length} actions completed (${successCount} succeeded, ${failCount} failed)`;
-    }
 
     // Use streamId from the first result that has one (they should all be from same stream)
     const streamId = results.find(r => r.streamId)?.streamId;
 
-    // Build metadata with all results
+    // Build result summaries
     const resultSummaries = results.map(r => ({
       actionId: r.actionId,
       success: r.success,
@@ -69,25 +61,18 @@ export class ActionResultProcessor extends Component {
       message: r.message
     }));
 
-    console.log(`[ActionResultProcessor] Emitting activation:create for ${results.length} action result(s), streamId: ${streamId}`);
+    console.log(`[ActionResultProcessor] Emitting action:completed for ${results.length} result(s), streamId: ${streamId}`);
 
-    // Emit semantic activation:create event (triggers new frame, ActivationReceptor creates facet)
+    // Emit semantic action:completed event (ActivationDeciderTransform decides whether to activate)
     this.emit({
-      topic: 'activation:create',
+      topic: 'action:completed',
       timestamp: Date.now(),
       payload: {
-        reason,
-        id: `activation-results-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        priority: 'normal',
-        source: 'action-result',
+        resultCount: results.length,
+        successCount,
+        failCount,
         streamId,
-        metadata: {
-          resultCount: results.length,
-          successCount,
-          failCount,
-          results: resultSummaries,
-          reason: successCount === results.length ? 'actions_completed' : 'actions_mixed'
-        }
+        results: resultSummaries
       }
     });
   }

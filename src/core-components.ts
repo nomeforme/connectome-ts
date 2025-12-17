@@ -19,7 +19,7 @@ import { AxonLoaderComponent } from './components/axon-loader';
 // Scripting components (FLEX architecture)
 import { ScriptExecutorEffector } from './scripting/script-executor';
 import { ActionResultProcessor } from './scripting/action-result-processor';
-import { ActivationReceptor } from './scripting/activation-receptor';
+import { ActivationDecider } from './scripting/activation-decider';
 
 // Register core components
 ComponentRegistry.register('AgentComponent', AgentComponent);
@@ -33,7 +33,7 @@ ComponentRegistry.register('AxonLoaderComponent', AxonLoaderComponent);
 // Scripting components
 ComponentRegistry.register('ScriptExecutorEffector', ScriptExecutorEffector);
 ComponentRegistry.register('ActionResultProcessor', ActionResultProcessor);
-ComponentRegistry.register('ActivationReceptor', ActivationReceptor);
+ComponentRegistry.register('ActivationDecider', ActivationDecider);
 
 // Temporary: Register test components
 // TODO: Move these to AXON extensions

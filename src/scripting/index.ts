@@ -28,11 +28,11 @@ export { LuaSandbox, createLuaSandbox, LuaExecutionResult } from './lua-sandbox'
 // Script Executor
 export { ScriptExecutorEffector, createScriptExecutor } from './script-executor';
 
-// Action Result Processor (Maintainer that emits activation:create events from action-results)
+// Action Result Processor (Maintainer that emits action:completed events)
 export { ActionResultProcessor } from './action-result-processor';
 
-// Activation Receptor (Receptor that creates agent-activation facets from activation:create events)
-export { ActivationReceptor } from './activation-receptor';
+// Activation Decider (decides when to activate the agent based on semantic events)
+export { ActivationDecider } from './activation-decider';
 
 // Tool Registry
 export {

@@ -302,7 +302,8 @@ export class AgentComponent extends Component implements RestorableComponent {
   private async runAgentCycle(
     context: RenderedContext,
     streamRef?: StreamRef,
-    activationId?: string
+    activationId?: string,
+    streamId?: string
   ): Promise<{ facets: Facet[]; events: SpaceEvent[] }> {
     const facets: Facet[] = [];
 
@@ -311,13 +312,16 @@ export class AgentComponent extends Component implements RestorableComponent {
       return { facets: [], events: [] };
     }
 
+    // Build effective streamRef with streamId if provided
+    const effectiveStreamRef = streamRef || (streamId ? { streamId } as StreamRef : undefined);
+
     // Run the agent's cycle with the full context
-    const outgoingFrame = await this.agent.runCycle(context, streamRef);
+    const outgoingFrame = await this.agent.runCycle(context, effectiveStreamRef);
 
     // Convert agent operations to facets
     for (const operation of outgoingFrame.deltas) {
       if (operation.type === 'addFacet') {
-        const preparedFacet = this.prepareAgentFacet(operation.facet, streamRef);
+        const preparedFacet = this.prepareAgentFacet(operation.facet, effectiveStreamRef);
         facets.push(preparedFacet);
       }
     }
@@ -327,8 +331,8 @@ export class AgentComponent extends Component implements RestorableComponent {
 
   private prepareAgentFacet(facet: Facet, streamRef?: StreamRef): Facet {
     const prepared = { ...facet } as Facet;
-    // Effective streamId: prefer streamRef.streamId, fall back to plain streamId
-    const effectiveStreamId = streamRef?.streamId || streamId;
+    // Effective streamId: prefer streamRef.streamId, fall back to facet's own streamId
+    const effectiveStreamId = streamRef?.streamId || (facet as any).streamId;
 
     if (hasAgentGeneratedAspect(prepared) && !prepared.agentId) {
       prepared.agentId = this.id;

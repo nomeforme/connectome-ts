@@ -194,22 +194,16 @@ export abstract class ControlPanelComponent extends InteractiveComponent {
    * Re-activate the agent so it can continue its turn with updated context
    */
   protected reactivateAgent(reason: string): void {
-    // Emit activation:create event to trigger agent re-activation
-    // This follows the proper FLEX pattern: event → receptor creates facet
-    console.log(`[ControlPanel:${this.getPanelId()}] Emitting activation:create: ${reason}`);
+    // Emit semantic panel:closed event - ActivationDecider decides whether to activate
+    // FLEX pattern: events describe what happened, transforms decide policy
+    console.log(`[ControlPanel:${this.getPanelId()}] Emitting panel:closed: ${reason}`);
 
     this.emit({
-      topic: 'activation:create',
+      topic: 'panel:closed',
       timestamp: Date.now(),
       payload: {
-        reason,
-        id: `activation-panel-${this.getPanelId()}-${Date.now()}`,
-        priority: 'normal',
-        source: `control-panel-${this.getPanelId()}`,
-        metadata: {
-          trigger: 'control-panel-toggle',
-          panelId: this.getPanelId()
-        }
+        panelId: this.getPanelId(),
+        reason
       }
     });
   }
