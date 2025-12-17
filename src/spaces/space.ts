@@ -128,7 +128,8 @@ export class Space {
   // Callbacks to run on next frame
   private nextFrameCallbacks: (() => void)[] = [];
 
-  private componentOrderingStrategy: ComponentOrderingStrategy = new PriorityOrderingStrategy();
+  // Default to multi-constraint ordering to support before/after constraints
+  private componentOrderingStrategy: ComponentOrderingStrategy = new MultiConstraintOrderingStrategy();
 
   /**
    * Runtime flag to enable detailed component execution tracing
@@ -164,10 +165,13 @@ export class Space {
     this.tracer = getGlobalTracer();
     this.lifecycleId = lifecycleId || this.generateLifecycleId();
 
-    // Configure ordering strategy
-    if (options?.orderingStrategy === 'multi-constraint') {
+    // Configure ordering strategy (default is multi-constraint, supports before/after)
+    if (options?.orderingStrategy === 'priority') {
+      this.componentOrderingStrategy = new PriorityOrderingStrategy();
+    } else if (options?.multiConstraintOptions) {
+      // Apply options to the default multi-constraint strategy
       this.componentOrderingStrategy = new MultiConstraintOrderingStrategy(
-        options.multiConstraintOptions ?? {}
+        options.multiConstraintOptions
       );
     }
 
