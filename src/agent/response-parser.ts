@@ -75,10 +75,14 @@ export function parseAgentResponse(
     // Restore backticks in parameters
     restoreBackticksInParams(parameters, backtickPlaceholders);
 
+    // Extract alias from parameters (alias is metadata, not a tool parameter)
+    const alias = parameters.alias as string | undefined;
+    if (alias) delete parameters.alias;
+
     const toolName = pathParts.join('.');
     operations.push({
       type: 'addFacet',
-      facet: createActionFacet(toolName, parameters, agentId, agentName, defaultStreamId)
+      facet: createActionFacet(toolName, parameters, agentId, agentName, defaultStreamId, alias)
     });
 
     // Emit event if tool is registered
@@ -157,11 +161,14 @@ export function parseAgentResponse(
       content = content.replace(/^\n/, '').replace(/\n\s*$/, '');
     }
 
-    const params: Record<string, any> = { ...attributes, content };
+    // Extract alias before merging into params (alias is metadata, not a tool parameter)
+    const alias = attributes.alias as string | undefined;
+    const { alias: _, ...otherAttributes } = attributes;
+    const params: Record<string, any> = { ...otherAttributes, content };
 
     operations.push({
       type: 'addFacet',
-      facet: createActionFacet(actionName, params, agentId, agentName, defaultStreamId)
+      facet: createActionFacet(actionName, params, agentId, agentName, defaultStreamId, alias)
     });
 
     // Emit event if tool is registered
@@ -272,13 +279,14 @@ function createActionFacet(
   parameters: Record<string, any>,
   agentId: string,
   agentName: string | undefined,
-  streamId: string
+  streamId: string,
+  alias?: string
 ): Facet {
   return {
     id: generateFacetId('agent-action'),
     type: 'action',
     content: JSON.stringify(parameters),
-    state: { toolName, parameters },
+    state: { toolName, parameters, ...(alias ? { alias } : {}) },
     agentId,
     agentName,
     streamId

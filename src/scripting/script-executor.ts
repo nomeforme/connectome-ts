@@ -48,6 +48,7 @@ interface RunningScript {
   agentName?: string;
   streamId?: string;
   streamType?: string;
+  alias?: string;
   code: string;
   timeoutMs: number | null;
   parentScriptId: string | null;
@@ -245,7 +246,7 @@ export class ScriptExecutorEffector extends Component {
   private handleActionFacet(facet: Facet): void {
     if (!hasStateAspect(facet)) return;
 
-    const actionState = facet.state as { toolName: string; parameters?: Record<string, any> };
+    const actionState = facet.state as { toolName: string; parameters?: Record<string, any>; alias?: string };
     if (actionState.toolName !== 'lua') return;
 
     // Ensure tool registry is available (may be delayed due to isRestoring=true)
@@ -263,6 +264,8 @@ export class ScriptExecutorEffector extends Component {
     const agentName = (facet as any).agentName;
     const streamId = (facet as any).streamId;
     const streamType = (facet as any).streamType;
+    // Alias can be in state (from response-parser) or parameters
+    const alias = actionState.alias || params.alias;
 
     // Calculate timeout
     let timeoutMs: number | null = this.config.defaultTimeoutMs;
@@ -323,7 +326,8 @@ export class ScriptExecutorEffector extends Component {
           null,  // parentActionId
           { success: false, error: error.message, message: 'Script syntax error' },
           streamId,  // Pass streamId for routing
-          streamType  // Pass streamType for routing
+          streamType,  // Pass streamType for routing
+          alias  // Pass alias for correlation
         ),
       });
 
@@ -358,6 +362,7 @@ export class ScriptExecutorEffector extends Component {
       agentName,
       streamId,
       streamType,
+      alias,
       code,
       timeoutMs,
       parentScriptId: params.parentScriptId || null,
@@ -533,7 +538,8 @@ export class ScriptExecutorEffector extends Component {
         ? { success: true, result: (script.result as any).result, message: 'Script completed' }
         : { success: false, error: (script.result as any).error || 'Script failed', message: 'Script failed' },
       script.streamId,  // Pass streamId so agent response can be routed correctly
-      script.streamType  // Pass streamType for routing
+      script.streamType,  // Pass streamType for routing
+      script.alias  // Pass alias for correlation
     );
     this.addOperation({ type: 'addFacet', facet: actionResultFacet });
 
