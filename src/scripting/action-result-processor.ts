@@ -49,8 +49,9 @@ export class ActionResultProcessor extends Component {
     const successCount = results.filter(r => r.success).length;
     const failCount = results.length - successCount;
 
-    // Use streamId from the first result that has one (they should all be from same stream)
+    // Use streamId/streamType from the first result that has one (they should all be from same stream)
     const streamId = results.find(r => r.streamId)?.streamId;
+    const streamType = results.find(r => r.streamType)?.streamType;
 
     // Build result summaries
     const resultSummaries = results.map(r => ({
@@ -61,7 +62,7 @@ export class ActionResultProcessor extends Component {
       message: r.message
     }));
 
-    console.log(`[ActionResultProcessor] Emitting action:completed for ${results.length} result(s), streamId: ${streamId}`);
+    console.log(`[ActionResultProcessor] Emitting action:completed for ${results.length} result(s), streamId: ${streamId}, streamType: ${streamType}`);
 
     // Emit semantic action:completed event (ActivationDeciderTransform decides whether to activate)
     this.emit({
@@ -72,6 +73,7 @@ export class ActionResultProcessor extends Component {
         successCount,
         failCount,
         streamId,
+        streamType,
         results: resultSummaries
       }
     });

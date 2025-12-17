@@ -201,9 +201,15 @@ export class AgentComponent extends Component implements RestorableComponent {
         if (targetAgentId && targetAgentId !== this.id) continue;
         if (targetAgent && targetAgent !== this.id && targetAgent !== agentName) continue;
 
+        // Include top-level facet properties (like streamId, streamType) that aren't in state
+        const facetStreamId = (change.facet as any).streamId;
+        const facetStreamType = (change.facet as any).streamType;
         const flattenedActivation = {
           ...activationState,
-          ...(activationState.metadata || {})
+          ...(activationState.metadata || {}),
+          // Top-level stream properties take precedence (set by createAgentActivation)
+          ...(facetStreamId ? { streamId: facetStreamId } : {}),
+          ...(facetStreamType ? { streamType: facetStreamType } : {})
         };
 
         const veilState = state as any;

@@ -47,6 +47,7 @@ interface RunningScript {
   agentId: string;
   agentName?: string;
   streamId?: string;
+  streamType?: string;
   code: string;
   timeoutMs: number | null;
   parentScriptId: string | null;
@@ -261,6 +262,7 @@ export class ScriptExecutorEffector extends Component {
     const agentId = (facet as any).agentId || 'unknown';
     const agentName = (facet as any).agentName;
     const streamId = (facet as any).streamId;
+    const streamType = (facet as any).streamType;
 
     // Calculate timeout
     let timeoutMs: number | null = this.config.defaultTimeoutMs;
@@ -320,7 +322,8 @@ export class ScriptExecutorEffector extends Component {
           scriptId,
           null,  // parentActionId
           { success: false, error: error.message, message: 'Script syntax error' },
-          streamId  // Pass streamId for routing
+          streamId,  // Pass streamId for routing
+          streamType  // Pass streamType for routing
         ),
       });
 
@@ -354,6 +357,7 @@ export class ScriptExecutorEffector extends Component {
       agentId,
       agentName,
       streamId,
+      streamType,
       code,
       timeoutMs,
       parentScriptId: params.parentScriptId || null,
@@ -528,7 +532,8 @@ export class ScriptExecutorEffector extends Component {
       script.result.success
         ? { success: true, result: (script.result as any).result, message: 'Script completed' }
         : { success: false, error: (script.result as any).error || 'Script failed', message: 'Script failed' },
-      script.streamId  // Pass streamId so agent response can be routed correctly
+      script.streamId,  // Pass streamId so agent response can be routed correctly
+      script.streamType  // Pass streamType for routing
     );
     this.addOperation({ type: 'addFacet', facet: actionResultFacet });
 
