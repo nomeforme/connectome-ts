@@ -244,7 +244,8 @@ export class AgentComponent extends Component implements RestorableComponent {
 
   /**
    * Runs the agent cycle in the background (fire-and-forget).
-   * Emits response events when complete, allowing the current frame to finish immediately.
+   * Emits activation:completed event when done, allowing the current frame to finish immediately.
+   * The ActivationCompletedReceptor will create all facets in a single frame.
    */
   private runAgentCycleBackground(
     context: RenderedContext,
@@ -256,47 +257,36 @@ export class AgentComponent extends Component implements RestorableComponent {
       try {
         const response = await this.runAgentCycle(context, streamRef, activationId, streamId);
 
-        // Emit events first (they may trigger actions)
-        for (const event of response.events) {
-          this.emit(event);
-        }
-
-        // Then emit facets for response
-        for (const facet of response.facets) {
-          this.emit({
-            topic: 'veil:operation',
-            timestamp: Date.now(),
-            payload: {
-              operation: {
-                type: 'addFacet',
-                facet
-              }
-            }
-          });
-        }
+        // Emit single activation:completed event
+        // ActivationCompletedReceptor will create all facets in one frame
+        this.emit({
+          topic: 'activation:completed',
+          timestamp: Date.now(),
+          payload: {
+            activationId,
+            agentId: this.id,
+            streamId,
+            streamType: streamRef?.streamType,
+            facets: response.facets,
+            events: response.events,
+            success: true
+          }
+        });
 
       } catch (error) {
         console.error('[AgentComponent] Agent cycle error:', error);
 
-        // Emit error event
+        // Emit activation:completed with error
         this.emit({
-          topic: 'veil:operation',
+          topic: 'activation:completed',
           timestamp: Date.now(),
           payload: {
-            operation: {
-              type: 'addFacet',
-              facet: {
-                id: `agent-error-${Date.now()}`,
-                type: 'event',
-                content: String(error),
-                state: {
-                  source: this.id,
-                  eventType: 'agent-cycle-error',
-                  metadata: { activationId }
-                },
-                streamId: streamId
-              }
-            }
+            activationId,
+            agentId: this.id,
+            streamId,
+            facets: [],
+            success: false,
+            error: String(error)
           }
         });
       } finally {

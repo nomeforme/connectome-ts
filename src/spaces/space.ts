@@ -30,6 +30,7 @@ import {
   Maintainer
 } from './receptor-effector-types';
 import { VEILOperationReceptor } from './migration-adapters';
+import { ActivationCompletedReceptor } from '../agent/activation-completed-receptor';
 import { groupByPriority } from '../utils/priorities';
 // Legacy RETM type guards - kept for backwards compatibility but not used in FLEX
 // import { isReceptor, isTransform, isEffector, isMaintainer, isModulator } from '../utils/retm-type-guards';
@@ -178,9 +179,12 @@ export class Space {
     // Subscribe to agent activation events
     this.subscribe('agent:activate');
 
-    // Add built-in VEIL operation receptor for compatibility
+    // Add built-in receptors
     const veilOpReceptor = new VEILOperationReceptor();
     this.addComponent(veilOpReceptor);
+
+    const activationCompletedReceptor = new ActivationCompletedReceptor();
+    this.addComponent(activationCompletedReceptor);
   }
   
   /**
