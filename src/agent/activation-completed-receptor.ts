@@ -4,17 +4,18 @@
  * FLEX Component (constraint: priority 100 - Receptor level)
  *
  * When an agent activation cycle completes (LLM call finishes), this receptor
- * receives the semantic event and creates all response facets (speech, action,
+ * receives the raw LLM output and parses it into facets (speech, action,
  * thought, etc.) in a single frame.
  *
- * This replaces the previous pattern where AgentComponent emitted multiple
- * veil:operation events (one per facet), which caused multiple frames.
+ * The raw output is carried through the event, making it visible for
+ * debugging and enabling future streaming support (activation:stream).
  */
 
 import { Component } from '../spaces/component';
 import { ExecutionContext } from '../spaces/types';
 import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
-import { Facet } from '../veil/types';
+import { parseAgentResponse, ParserConfig } from './response-parser';
+import { ToolDefinition } from './types';
 
 /**
  * Payload for activation:completed event
@@ -24,16 +25,23 @@ export interface ActivationCompletedPayload {
   activationId: string;
   /** Agent ID that produced this response */
   agentId: string;
+  /** Agent name (for facet attribution) */
+  agentName?: string;
   /** Stream ID for multi-stream support */
   streamId?: string;
   /** Stream type (e.g., 'discord', 'console') */
   streamType?: string;
-  /** The facets produced by the agent (speech, action, thought, etc.) */
-  facets: Facet[];
-  /** Raw agent output text (unfiltered, for debugging/logging) */
-  rawOutput?: string;
-  /** Any events the agent wants to emit */
-  events?: Array<{ topic: string; payload?: any }>;
+  /** Raw LLM output (unfiltered, the actual response text) */
+  rawOutput: string;
+  /** LLM metadata */
+  llmMetadata?: {
+    tokensUsed?: number;
+    provider?: string;
+    model?: string;
+    timestamp?: string;
+  };
+  /** Registered tools (for event emission during parsing) */
+  tools?: Map<string, ToolDefinition>;
   /** Whether the activation succeeded */
   success: boolean;
   /** Error message if activation failed */
@@ -54,7 +62,7 @@ export class ActivationCompletedReceptor extends Component {
       return;
     }
 
-    const { activationId, agentId, facets, events, success, error } = payload;
+    const { activationId, agentId, agentName, streamId, rawOutput, tools, success, error } = payload;
 
     if (!success) {
       console.error(`[ActivationCompletedReceptor] Activation ${activationId} failed: ${error}`);
@@ -70,27 +78,41 @@ export class ActivationCompletedReceptor extends Component {
             eventType: 'activation-error',
             metadata: { activationId, error }
           },
-          streamId: payload.streamId || 'default',
+          streamId: streamId || 'default',
           ephemeral: true
         }
       });
       return;
     }
 
-    console.log(`[ActivationCompletedReceptor] Processing ${facets.length} facets from activation ${activationId}`);
-
-    // Add all facets in this single frame
-    for (const facet of facets) {
-      this.addOperation({
-        type: 'addFacet',
-        facet
-      });
+    if (!rawOutput) {
+      console.warn(`[ActivationCompletedReceptor] Activation ${activationId} completed but no rawOutput provided`);
+      return;
     }
 
-    // Queue any events the agent wants to emit
+    console.log(`[ActivationCompletedReceptor] Parsing raw output for activation ${activationId} (${rawOutput.length} chars)`);
+
+    // Parse the raw output into facets
+    const parserConfig: ParserConfig = {
+      agentId,
+      agentName,
+      defaultStreamId: streamId || 'default',
+      tools
+    };
+
+    const parsed = parseAgentResponse(rawOutput, parserConfig);
+
+    console.log(`[ActivationCompletedReceptor] Parsed ${parsed.operations.length} operations, ${parsed.events.length} events`);
+
+    // Add all facets in this single frame
+    for (const operation of parsed.operations) {
+      this.addOperation(operation);
+    }
+
+    // Queue any events (for tool invocations)
     // These will be processed in subsequent frames
-    if (events && events.length > 0) {
-      for (const evt of events) {
+    if (parsed.events.length > 0) {
+      for (const evt of parsed.events) {
         this.emit({
           topic: evt.topic,
           payload: evt.payload,

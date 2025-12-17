@@ -244,8 +244,8 @@ export class AgentComponent extends Component implements RestorableComponent {
 
   /**
    * Runs the agent cycle in the background (fire-and-forget).
-   * Emits activation:completed event when done, allowing the current frame to finish immediately.
-   * The ActivationCompletedReceptor will create all facets in a single frame.
+   * Emits activation:completed event with raw LLM output when done.
+   * The ActivationCompletedReceptor will parse and create all facets in a single frame.
    */
   private runAgentCycleBackground(
     context: RenderedContext,
@@ -257,21 +257,27 @@ export class AgentComponent extends Component implements RestorableComponent {
       try {
         const response = await this.runAgentCycle(context, streamRef, activationId, streamId);
 
-        // Emit single activation:completed event
-        // ActivationCompletedReceptor will create all facets in one frame
+        // Emit single activation:completed event with raw output
+        // ActivationCompletedReceptor will parse and create facets in one frame
         this.emit({
           topic: 'activation:completed',
           timestamp: Date.now(),
           payload: {
             activationId,
             agentId: this.id,
+            agentName: this.agentConfig?.name,
             streamId,
             streamType: streamRef?.streamType,
-            facets: response.facets,
-            events: response.events,
+            rawOutput: response.rawOutput,
+            llmMetadata: response.llmMetadata,
             success: true
           }
         });
+
+        // Emit any events from the agent (legacy support, may be removed later)
+        for (const event of response.events) {
+          this.emit(event);
+        }
 
       } catch (error) {
         console.error('[AgentComponent] Agent cycle error:', error);
@@ -283,8 +289,9 @@ export class AgentComponent extends Component implements RestorableComponent {
           payload: {
             activationId,
             agentId: this.id,
+            agentName: this.agentConfig?.name,
             streamId,
-            facets: [],
+            rawOutput: '',
             success: false,
             error: String(error)
           }
@@ -295,17 +302,22 @@ export class AgentComponent extends Component implements RestorableComponent {
     })();
   }
 
+  /**
+   * Raw output from agent cycle (for activation:completed event)
+   */
   private async runAgentCycle(
     context: RenderedContext,
     streamRef?: StreamRef,
     activationId?: string,
     streamId?: string
-  ): Promise<{ facets: Facet[]; events: SpaceEvent[] }> {
-    const facets: Facet[] = [];
-
+  ): Promise<{
+    rawOutput: string;
+    llmMetadata?: { tokensUsed?: number; provider?: string; timestamp?: string };
+    events: SpaceEvent[];
+  }> {
     if (!this.agent) {
       console.error('[AgentComponent] Agent not available for runCycle');
-      return { facets: [], events: [] };
+      return { rawOutput: '', events: [] };
     }
 
     // Build effective streamRef with streamId if provided
@@ -314,15 +326,28 @@ export class AgentComponent extends Component implements RestorableComponent {
     // Run the agent's cycle with the full context
     const outgoingFrame = await this.agent.runCycle(context, effectiveStreamRef);
 
-    // Convert agent operations to facets
-    for (const operation of outgoingFrame.deltas) {
-      if (operation.type === 'addFacet') {
-        const preparedFacet = this.prepareAgentFacet(operation.facet, effectiveStreamRef);
-        facets.push(preparedFacet);
-      }
+    // Extract raw completion from frame (attached by BasicAgent)
+    const rawCompletion = (outgoingFrame as any).rawCompletion as {
+      content: string;
+      tokensUsed?: number;
+      provider?: string;
+      timestamp?: string;
+    } | undefined;
+
+    if (!rawCompletion?.content) {
+      console.warn('[AgentComponent] No raw completion found in agent response');
+      return { rawOutput: '', events: outgoingFrame.events || [] };
     }
 
-    return { facets, events: outgoingFrame.events || [] };
+    return {
+      rawOutput: rawCompletion.content,
+      llmMetadata: {
+        tokensUsed: rawCompletion.tokensUsed,
+        provider: rawCompletion.provider,
+        timestamp: rawCompletion.timestamp
+      },
+      events: outgoingFrame.events || []
+    };
   }
 
   private prepareAgentFacet(facet: Facet, streamRef?: StreamRef): Facet {
