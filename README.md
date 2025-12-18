@@ -456,4 +456,4 @@ The architecture guide above is the primary reference. Additional documentation 
 
 ## Contributing
 
-This project is developed by [Anima Labs](https://github.com/janus/anima).
+This project is developed by [Anima Labs](https://animalabs.ai/).
