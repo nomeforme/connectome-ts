@@ -194,31 +194,16 @@ export abstract class ControlPanelComponent extends InteractiveComponent {
    * Re-activate the agent so it can continue its turn with updated context
    */
   protected reactivateAgent(reason: string): void {
-    // Emit veil:operation event to add agent-activation facet in next frame
-    // This is the declarative way - event will be processed by VEILOperationReceptor
-    console.log(`[ControlPanel:${this.getPanelId()}] Emitting agent-activation facet: ${reason}`);
+    // Emit semantic panel:closed event - ActivationDecider decides whether to activate
+    // FLEX pattern: events describe what happened, transforms decide policy
+    console.log(`[ControlPanel:${this.getPanelId()}] Emitting panel:closed: ${reason}`);
 
     this.emit({
-      topic: 'veil:operation',
+      topic: 'panel:closed',
       timestamp: Date.now(),
       payload: {
-        operation: {
-          type: 'addFacet',
-          facet: {
-            id: `activation-panel-${this.getPanelId()}-${Date.now()}`,
-            type: 'agent-activation',
-            content: reason,
-            state: {
-              reason,
-              priority: 'normal',
-              source: `control-panel-${this.getPanelId()}`,
-              metadata: {
-                trigger: 'control-panel-toggle',
-                panelId: this.getPanelId()
-              }
-            }
-          }
-        }
+        panelId: this.getPanelId(),
+        reason
       }
     });
   }

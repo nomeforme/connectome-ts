@@ -394,8 +394,29 @@ export class FrameTrackingHUD implements CompressibleHUD {
               content = `<thought>${facet.content}</thought>`;
           }
               break;
+
+          case 'action-result': {
+            // ActionResultFacet has fields at top level, not in state
+            const actionResultFacet = facet as {
+              actionId?: string;
+              success?: boolean;
+              result?: unknown;
+              error?: string;
+              message?: string;
+              alias?: string;
+            };
+            content = this.renderToolResult(
+              actionResultFacet.actionId || facet.id,
+              actionResultFacet.success ?? false,
+              actionResultFacet.result,
+              actionResultFacet.error,
+              actionResultFacet.message,
+              actionResultFacet.alias
+            );
+            break;
+          }
             }
-        
+
         content = stripTurnMarkers(content);
 
         if (content) {
@@ -543,6 +564,7 @@ export class FrameTrackingHUD implements CompressibleHUD {
       'state',              // Tool results, component state (in frames)
       'agent-activation',   // Activation triggers (in frames)
       'component-state',    // Component status changes (in frames)
+      'action-result',      // Tool/script execution results (feedback to agent)
     ];
 
     if (userContextTypes.includes(facet.type)) {
@@ -1106,6 +1128,26 @@ export class FrameTrackingHUD implements CompressibleHUD {
       ? ((facet as any).children as Facet[])
       : [];
 
+    // Special handling for action-result facets (have fields at top level, not content)
+    if (facet.type === 'action-result') {
+      const actionResultFacet = facet as {
+        actionId?: string;
+        success?: boolean;
+        result?: unknown;
+        error?: string;
+        message?: string;
+        alias?: string;
+      };
+      return this.renderToolResult(
+        actionResultFacet.actionId || facet.id,
+        actionResultFacet.success ?? false,
+        actionResultFacet.result,
+        actionResultFacet.error,
+        actionResultFacet.message,
+        actionResultFacet.alias
+      );
+    }
+
     // Skip facets with no content AND no children
     if (!facetContent && facetChildren.length === 0) {
       return null;
@@ -1206,16 +1248,44 @@ export class FrameTrackingHUD implements CompressibleHUD {
   }
   
   private renderToolCall(toolName: string, parameters: any): string {
-    const parts = [`<tool_call name="${toolName}">`];
-    
+    // Render as <action> to match what the agent writes
+    const parts = [`<action name="${toolName}">`];
+
     for (const [key, value] of Object.entries(parameters)) {
       parts.push(`<parameter name="${key}">${this.escapeXml(String(value))}</parameter>`);
     }
-    
-    parts.push('</tool_call>');
+
+    parts.push('</action>');
     return parts.join('\n');
   }
-  
+
+  private renderToolResult(actionId: string, success: boolean, result: unknown, error?: string, message?: string, alias?: string): string {
+    // Render as <action_result> to pair with <action>
+    // Include alias attribute if provided (for correlating results with actions)
+    const aliasAttr = alias ? ` alias="${this.escapeXml(alias)}"` : '';
+    const parts = [`<action_result action_id="${this.escapeXml(actionId)}"${aliasAttr} success="${success}">`];
+
+    if (success) {
+      if (result !== undefined) {
+        // Render result - if it's an object, JSON stringify it
+        const resultStr = typeof result === 'object' ? JSON.stringify(result, null, 2) : String(result);
+        parts.push(this.escapeXml(resultStr));
+      } else if (message) {
+        parts.push(this.escapeXml(message));
+      }
+    } else {
+      // Error case
+      if (error) {
+        parts.push(`Error: ${this.escapeXml(error)}`);
+      } else if (message) {
+        parts.push(this.escapeXml(message));
+      }
+    }
+
+    parts.push('</action_result>');
+    return parts.join('\n');
+  }
+
   private renderAction(action: any): string {
     // Render as the original @path syntax (e.g., @chat.general.say)
     const actionPath = action.path.join('.');

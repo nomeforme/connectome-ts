@@ -184,6 +184,9 @@ export { ConnectomeHost, type HostConfig } from './host';
 export type { ConnectomeApplication } from './host/types';
 export { reference, external, type RestorableComponent } from './host/decorators';
 
+// Scripting exports
+export * from './scripting';
+
 // Helper/Factory exports
 export {
   // ID generation

@@ -30,6 +30,7 @@ import {
   Maintainer
 } from './receptor-effector-types';
 import { VEILOperationReceptor } from './migration-adapters';
+import { ActivationCompletedReceptor } from '../agent/activation-completed-receptor';
 import { groupByPriority } from '../utils/priorities';
 // Legacy RETM type guards - kept for backwards compatibility but not used in FLEX
 // import { isReceptor, isTransform, isEffector, isMaintainer, isModulator } from '../utils/retm-type-guards';
@@ -128,7 +129,8 @@ export class Space {
   // Callbacks to run on next frame
   private nextFrameCallbacks: (() => void)[] = [];
 
-  private componentOrderingStrategy: ComponentOrderingStrategy = new PriorityOrderingStrategy();
+  // Default to multi-constraint ordering to support before/after constraints
+  private componentOrderingStrategy: ComponentOrderingStrategy = new MultiConstraintOrderingStrategy();
 
   // Sub-cycle configuration
   private subCycleConfig: Required<SubCycleConfig> = {
@@ -183,10 +185,13 @@ export class Space {
     this.tracer = getGlobalTracer();
     this.lifecycleId = lifecycleId || this.generateLifecycleId();
 
-    // Configure ordering strategy
-    if (options?.orderingStrategy === 'multi-constraint') {
+    // Configure ordering strategy (default is multi-constraint, supports before/after)
+    if (options?.orderingStrategy === 'priority') {
+      this.componentOrderingStrategy = new PriorityOrderingStrategy();
+    } else if (options?.multiConstraintOptions) {
+      // Apply options to the default multi-constraint strategy
       this.componentOrderingStrategy = new MultiConstraintOrderingStrategy(
-        options.multiConstraintOptions ?? {}
+        options.multiConstraintOptions
       );
     }
     
@@ -201,9 +206,12 @@ export class Space {
     // Subscribe to agent activation events
     this.subscribe('agent:activate');
 
-    // Add built-in VEIL operation receptor for compatibility
+    // Add built-in receptors
     const veilOpReceptor = new VEILOperationReceptor();
     this.addComponent(veilOpReceptor);
+
+    const activationCompletedReceptor = new ActivationCompletedReceptor();
+    this.addComponent(activationCompletedReceptor);
   }
   
   /**

@@ -122,6 +122,38 @@ function deserializeFacet(data: any): Facet | null {
         if (data.actionName) base.actionName = data.actionName;
         if (data.parameters) base.parameters = deserializeValue(data.parameters);
         break;
+
+      case 'script-execution':
+        // Restore script execution fields
+        if (data.code) base.code = data.code;
+        if (data.timeoutMs !== undefined) base.timeoutMs = data.timeoutMs;
+        if (data.parentScriptId !== undefined) base.parentScriptId = data.parentScriptId;
+        if (data.blockedOn) base.blockedOn = data.blockedOn;
+
+        // Mark running/blocked scripts as interrupted on restore
+        // Scripts cannot be resumed after restart since Lua state is lost
+        if (data.status === 'running' || data.status === 'blocked' || data.status === 'pending') {
+          base.status = 'error';
+          console.log(`[Restoration] Marking script ${data.id} as interrupted (was ${data.status})`);
+        } else {
+          base.status = data.status;
+        }
+        break;
+
+      case 'tool-call':
+        // Restore tool call fields
+        if (data.parentScriptId) base.parentScriptId = data.parentScriptId;
+        if (data.toolName) base.toolName = data.toolName;
+        if (data.args) base.args = deserializeValue(data.args);
+
+        // Mark pending/running tool calls as error on restore
+        if (data.status === 'running' || data.status === 'pending') {
+          base.status = 'error';
+          console.log(`[Restoration] Marking tool-call ${data.id} as interrupted (was ${data.status})`);
+        } else {
+          base.status = data.status;
+        }
+        break;
     }
     
     // Restore state aspect (for all facets that have it, not just type='state')

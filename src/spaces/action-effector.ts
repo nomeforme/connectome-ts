@@ -61,6 +61,12 @@ export class ActionEffector extends Component {
       const toolName = actionState.toolName;
       const parameters = actionState.parameters || {};
 
+      // Skip actions handled by other effectors (e.g., ScriptExecutorEffector handles 'lua')
+      const specialActions = ['lua'];
+      if (specialActions.includes(toolName)) {
+        continue;
+      }
+
       console.log(`[ActionEffector] Processing action facet: ${toolName}`, parameters);
 
       // Parse tool name to extract target ID and action

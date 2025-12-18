@@ -398,10 +398,12 @@ export function createAgentActivation(
     id?: string;
     priority?: 'low' | 'normal' | 'high' | 'critical';
     sourceAgentId?: string;
+    streamId?: string;
+    streamType?: string;
     [key: string]: any;
   } = {}
 ): AgentActivationFacet {
-  const { id, priority = 'normal', sourceAgentId, ...extraState } = options;
+  const { id, priority = 'normal', sourceAgentId, streamId, streamType, ...extraState } = options;
 
   const facet: AgentActivationFacet = {
     id: id || friendlyId('activation'),
@@ -413,6 +415,9 @@ export function createAgentActivation(
       // Nest extra state under metadata for consistent access pattern
       ...(Object.keys(extraState).length > 0 ? { metadata: extraState } : {})
     },
+    // streamId/streamType are top-level facet properties for stream association
+    ...(streamId ? { streamId } : {}),
+    ...(streamType ? { streamType } : {}),
     ephemeral: true
   };
 

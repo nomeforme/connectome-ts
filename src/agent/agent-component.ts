@@ -34,7 +34,8 @@ import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
 export class AgentComponent extends Component implements RestorableComponent {
   constraints = [priorityConstraint(ComponentPriority.EFFECTOR)];
 
-  // Watch for activation facets AND their rendered contexts
+  // Watch for activation facets and rendered contexts
+  // (action-result handling moved to ActionResultProcessor at MAINTAINER priority)
   facetFilters: FacetFilter[] = [
     { type: 'agent-activation' },
     { type: 'rendered-context' }
@@ -200,9 +201,15 @@ export class AgentComponent extends Component implements RestorableComponent {
         if (targetAgentId && targetAgentId !== this.id) continue;
         if (targetAgent && targetAgent !== this.id && targetAgent !== agentName) continue;
 
+        // Include top-level facet properties (like streamId, streamType) that aren't in state
+        const facetStreamId = (change.facet as any).streamId;
+        const facetStreamType = (change.facet as any).streamType;
         const flattenedActivation = {
           ...activationState,
-          ...(activationState.metadata || {})
+          ...(activationState.metadata || {}),
+          // Top-level stream properties take precedence (set by createAgentActivation)
+          ...(facetStreamId ? { streamId: facetStreamId } : {}),
+          ...(facetStreamType ? { streamType: facetStreamType } : {})
         };
 
         const veilState = state as any;
@@ -231,12 +238,14 @@ export class AgentComponent extends Component implements RestorableComponent {
 
         this.runAgentCycleBackground(context, streamRef, activationId, streamId);
       }
+      // Note: action-result handling moved to ActionResultProcessor (MAINTAINER priority)
     }
   }
 
   /**
    * Runs the agent cycle in the background (fire-and-forget).
-   * Emits response events when complete, allowing the current frame to finish immediately.
+   * Emits activation:completed event with raw LLM output when done.
+   * The ActivationCompletedReceptor will parse and create all facets in a single frame.
    */
   private runAgentCycleBackground(
     context: RenderedContext,
@@ -246,49 +255,45 @@ export class AgentComponent extends Component implements RestorableComponent {
   ): void {
     (async () => {
       try {
-        const response = await this.runAgentCycle(context, streamRef, activationId);
+        const response = await this.runAgentCycle(context, streamRef, activationId, streamId);
 
-        // Emit events first (they may trigger actions)
+        // Emit single activation:completed event with raw output
+        // ActivationCompletedReceptor will parse and create facets in one frame
+        this.emit({
+          topic: 'activation:completed',
+          timestamp: Date.now(),
+          payload: {
+            activationId,
+            agentId: this.id,
+            agentName: this.agentConfig?.name,
+            streamId,
+            streamType: streamRef?.streamType,
+            rawOutput: response.rawOutput,
+            llmMetadata: response.llmMetadata,
+            success: true
+          }
+        });
+
+        // Emit any events from the agent (legacy support, may be removed later)
         for (const event of response.events) {
           this.emit(event);
-        }
-
-        // Then emit facets for response
-        for (const facet of response.facets) {
-          this.emit({
-            topic: 'veil:operation',
-            timestamp: Date.now(),
-            payload: {
-              operation: {
-                type: 'addFacet',
-                facet
-              }
-            }
-          });
         }
 
       } catch (error) {
         console.error('[AgentComponent] Agent cycle error:', error);
 
-        // Emit error event
+        // Emit activation:completed with error
         this.emit({
-          topic: 'veil:operation',
+          topic: 'activation:completed',
           timestamp: Date.now(),
           payload: {
-            operation: {
-              type: 'addFacet',
-              facet: {
-                id: `agent-error-${Date.now()}`,
-                type: 'event',
-                content: String(error),
-                state: {
-                  source: this.id,
-                  eventType: 'agent-cycle-error',
-                  metadata: { activationId }
-                },
-                streamId: streamId
-              }
-            }
+            activationId,
+            agentId: this.id,
+            agentName: this.agentConfig?.name,
+            streamId,
+            rawOutput: '',
+            success: false,
+            error: String(error)
           }
         });
       } finally {
@@ -297,34 +302,58 @@ export class AgentComponent extends Component implements RestorableComponent {
     })();
   }
 
+  /**
+   * Raw output from agent cycle (for activation:completed event)
+   */
   private async runAgentCycle(
     context: RenderedContext,
     streamRef?: StreamRef,
-    activationId?: string
-  ): Promise<{ facets: Facet[]; events: SpaceEvent[] }> {
-    const facets: Facet[] = [];
-
+    activationId?: string,
+    streamId?: string
+  ): Promise<{
+    rawOutput: string;
+    llmMetadata?: { tokensUsed?: number; provider?: string; timestamp?: string };
+    events: SpaceEvent[];
+  }> {
     if (!this.agent) {
       console.error('[AgentComponent] Agent not available for runCycle');
-      return { facets: [], events: [] };
+      return { rawOutput: '', events: [] };
     }
+
+    // Build effective streamRef with streamId if provided
+    const effectiveStreamRef = streamRef || (streamId ? { streamId } as StreamRef : undefined);
 
     // Run the agent's cycle with the full context
-    const outgoingFrame = await this.agent.runCycle(context, streamRef);
+    const outgoingFrame = await this.agent.runCycle(context, effectiveStreamRef);
 
-    // Convert agent operations to facets
-    for (const operation of outgoingFrame.deltas) {
-      if (operation.type === 'addFacet') {
-        const preparedFacet = this.prepareAgentFacet(operation.facet, streamRef);
-        facets.push(preparedFacet);
-      }
+    // Extract raw completion from frame (attached by BasicAgent)
+    const rawCompletion = (outgoingFrame as any).rawCompletion as {
+      content: string;
+      tokensUsed?: number;
+      provider?: string;
+      timestamp?: string;
+    } | undefined;
+
+    if (!rawCompletion?.content) {
+      console.warn('[AgentComponent] No raw completion found in agent response');
+      return { rawOutput: '', events: outgoingFrame.events || [] };
     }
 
-    return { facets, events: outgoingFrame.events || [] };
+    return {
+      rawOutput: rawCompletion.content,
+      llmMetadata: {
+        tokensUsed: rawCompletion.tokensUsed,
+        provider: rawCompletion.provider,
+        timestamp: rawCompletion.timestamp
+      },
+      events: outgoingFrame.events || []
+    };
   }
 
   private prepareAgentFacet(facet: Facet, streamRef?: StreamRef): Facet {
     const prepared = { ...facet } as Facet;
+    // Effective streamId: prefer streamRef.streamId, fall back to facet's own streamId
+    const effectiveStreamId = streamRef?.streamId || (facet as any).streamId;
 
     if (hasAgentGeneratedAspect(prepared) && !prepared.agentId) {
       prepared.agentId = this.id;
@@ -332,26 +361,26 @@ export class AgentComponent extends Component implements RestorableComponent {
 
     if ((prepared.type === 'speech' || prepared.type === 'thought' || prepared.type === 'action') && !hasAgentGeneratedAspect(prepared)) {
       (prepared as Facet & { agentId: string }).agentId = this.id;
-      if (streamRef?.streamId) {
-        (prepared as Facet & { streamId: string }).streamId = streamRef.streamId;
+      if (effectiveStreamId) {
+        (prepared as Facet & { streamId: string }).streamId = effectiveStreamId;
       }
     }
 
-    if (streamRef?.streamId && hasStreamAspect(prepared)) {
-      prepared.streamId = prepared.streamId || streamRef.streamId;
+    if (effectiveStreamId && hasStreamAspect(prepared)) {
+      prepared.streamId = prepared.streamId || effectiveStreamId;
     }
 
     if (prepared.type === 'speech' || prepared.type === 'thought') {
       if (!hasContentAspect(prepared)) {
         (prepared as Facet & { content: string }).content = '';
       }
-      if (!prepared.streamId && streamRef?.streamId) {
-        (prepared as Facet & { streamId: string }).streamId = streamRef.streamId;
+      if (!prepared.streamId && effectiveStreamId) {
+        (prepared as Facet & { streamId: string }).streamId = effectiveStreamId;
       }
     }
 
-    if (prepared.type === 'action' && hasStateAspect(prepared) && streamRef?.streamId) {
-      prepared.streamId = prepared.streamId || streamRef.streamId;
+    if (prepared.type === 'action' && hasStateAspect(prepared) && effectiveStreamId) {
+      prepared.streamId = prepared.streamId || effectiveStreamId;
     }
 
     return prepared;

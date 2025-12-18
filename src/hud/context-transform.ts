@@ -74,9 +74,11 @@ export class ContextTransform extends Component {
         }
         
         // console.log(`[ContextTransform] Rendering context for activation ${id}...`);
-        
-        // Get agent-specific options from activation
-        const agentOptions = this.buildAgentOptions(activationState);
+
+        // Get agent-specific options from activation (include top-level facet stream properties)
+        const facetStreamId = (facet as any).streamId;
+        const facetStreamType = (facet as any).streamType;
+        const agentOptions = this.buildAgentOptions(activationState, facetStreamId, facetStreamType);
         
         // Get VEILStateManager from Space
         const space = this.space;
@@ -136,7 +138,7 @@ export class ContextTransform extends Component {
     }
   }
   
-  private buildAgentOptions(activationState: Record<string, any>): HUDConfig {
+  private buildAgentOptions(activationState: Record<string, any>, facetStreamId?: string, facetStreamType?: string): HUDConfig {
     const options: HUDConfig = {
       ...this.defaultOptions,
       // Agent-specific overrides from activation
@@ -144,12 +146,15 @@ export class ContextTransform extends Component {
       maxTokens: activationState.maxTokens || this.defaultOptions?.maxTokens || 4000,
       metadata: this.defaultOptions?.metadata
     };
-    
-    // Set focused stream from activation's streamRef
-    if (activationState.streamRef?.streamId) {
+
+    // Set focused stream from activation's streamRef or top-level facet properties
+    const streamId = activationState.streamRef?.streamId || facetStreamId;
+    const streamType = activationState.streamRef?.streamType || facetStreamType;
+    if (streamId) {
       options.renderContext = {
         ...this.defaultOptions?.renderContext,
-        focusedStream: activationState.streamRef.streamId
+        focusedStream: streamId,
+        ...(streamType ? { focusedStreamType: streamType } : {})
       };
     }
     
