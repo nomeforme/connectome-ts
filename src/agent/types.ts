@@ -55,6 +55,12 @@ export interface AgentConfig {
   defaultMaxTokens?: number;  // Max tokens for LLM generation (e.g., 200-1000)
   contextTokenBudget?: number;  // Token budget for context window (e.g., 4000-8000)
   tools?: ToolDefinition[];
+  /**
+   * Enable thinking mode prefill for chain-of-thought reasoning
+   * When enabled, prefills with <thinking> tag to encourage visible reasoning
+   * NOTE: This is NOT Anthropic's Extended Thinking API, just prefill-based CoT
+   */
+  enableThinkingMode?: boolean;
 }
 
 /**

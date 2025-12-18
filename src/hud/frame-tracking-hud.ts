@@ -1372,6 +1372,38 @@ export class FrameTrackingHUD implements CompressibleHUD {
       }
     }
     
+    // Apply format config for prefill
+    // Build the prefill content: <my_turn>\n<thinking>\n if both enabled
+    let prefillContent = '';
+    
+    // Start with assistant prefix if present (e.g., "<my_turn>\n")
+    if (config.formatConfig?.assistant?.prefix) {
+      prefillContent += config.formatConfig.assistant.prefix;
+    }
+    
+    // Add thinking open tag INSIDE the turn if enabled
+    // Result: <my_turn>\n<thinking>\n...reasoning...</thinking>\n...response...\n</my_turn>
+    const thinkingConfig = config.formatConfig?.thinking;
+    if (thinkingConfig?.enabled) {
+      const thinkingOpenTag = thinkingConfig.openTag ?? '<thinking>\n';
+      prefillContent += thinkingOpenTag;
+    }
+    
+    // Apply the prefill if we have content
+    if (prefillContent) {
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage && lastMessage.role === 'assistant') {
+        // Add prefill to existing assistant message
+        lastMessage.content = prefillContent + lastMessage.content;
+      } else {
+        // Add new assistant message with prefill content
+        messages.push({
+          role: 'assistant',
+          content: prefillContent
+        });
+      }
+    }
+    
     return { messages, frameToMessageIndex };
   }
   
@@ -1559,16 +1591,33 @@ export class FrameTrackingHUD implements CompressibleHUD {
     }
     
     // Apply format config for prefill
+    // Build the prefill content: <my_turn>\n<thinking>\n if both enabled
+    let prefillContent = '';
+    
+    // Start with assistant prefix if present (e.g., "<my_turn>\n")
     if (config.formatConfig?.assistant?.prefix) {
+      prefillContent += config.formatConfig.assistant.prefix;
+    }
+    
+    // Add thinking open tag INSIDE the turn if enabled
+    // Result: <my_turn>\n<thinking>\n...reasoning...</thinking>\n...response...\n</my_turn>
+    const thinkingConfig = config.formatConfig?.thinking;
+    if (thinkingConfig?.enabled) {
+      const thinkingOpenTag = thinkingConfig.openTag ?? '<thinking>\n';
+      prefillContent += thinkingOpenTag;
+    }
+    
+    // Apply the prefill if we have content
+    if (prefillContent) {
       const lastMessage = messages[messages.length - 1];
       if (lastMessage && lastMessage.role === 'assistant') {
-        // Add prefix to existing assistant message
-        lastMessage.content = config.formatConfig.assistant.prefix + lastMessage.content;
+        // Add prefill to existing assistant message
+        lastMessage.content = prefillContent + lastMessage.content;
       } else {
-        // Add new assistant message with just the prefix for prefill
+        // Add new assistant message with prefill content
         messages.push({
           role: 'assistant',
-          content: config.formatConfig.assistant.prefix
+          content: prefillContent
         });
       }
     }

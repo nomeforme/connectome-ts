@@ -214,12 +214,7 @@ export class BasicAgent implements AgentInterface {
           maxTokens: this.config.defaultMaxTokens || 1000,
           temperature: this.config.defaultTemperature || 1.0,
           stopSequences: ['</my_turn>'],
-          formatConfig: {
-            assistant: {
-              prefix: '<my_turn>\n',
-              suffix: '\n</my_turn>'
-            }
-          }
+          formatConfig: this.buildFormatConfig()
         }
       );
       
@@ -708,16 +703,37 @@ export class BasicAgent implements AgentInterface {
         maxTokens: this.config.contextTokenBudget || 4000,  // Context window budget, not generation limit
         metadata: {
         },
-        formatConfig: {
-          assistant: {
-            prefix: '<my_turn>\n',
-            suffix: '\n</my_turn>'
-          }
-        },
+        formatConfig: this.buildFormatConfig(),
         // Pass agent name for debugging
         name: this.config.name
       } as any
     );
+  }
+  
+  /**
+   * Build format config for LLM calls, including thinking mode if enabled
+   */
+  private buildFormatConfig() {
+    const formatConfig: {
+      assistant: { prefix: string; suffix: string };
+      thinking?: { enabled: boolean; openTag: string; closeTag: string };
+    } = {
+      assistant: {
+        prefix: '<my_turn>\n',
+        suffix: '\n</my_turn>'
+      }
+    };
+    
+    // Add thinking configuration if enabled
+    if (this.config.enableThinkingMode) {
+      formatConfig.thinking = {
+        enabled: true,
+        openTag: '<thinking>\n',
+        closeTag: '\n</thinking>\n'
+      };
+    }
+    
+    return formatConfig;
   }
   
   private applyStreamRouting(
