@@ -68,8 +68,8 @@ interface RunningScript {
 export class ScriptExecutorEffector extends Component {
   constraints = [priorityConstraint(ComponentPriority.EFFECTOR)];
 
-  // Subscribe to tool-call:completed events (triggers frames for script resumption)
-  topics = ['tool-call:completed'];
+  // Subscribe to activation:completed (to process lua actions) and tool-call:completed (for script resumption)
+  topics = ['activation:completed', 'tool-call:completed'];
 
   private config: Required<ScriptExecutionConfig>;
   private runningScripts: Map<string, RunningScript> = new Map();
