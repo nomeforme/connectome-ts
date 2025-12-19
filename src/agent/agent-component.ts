@@ -277,7 +277,6 @@ export class AgentComponent extends Component implements RestorableComponent {
           streamId,
           streamType: streamRef?.streamType,
           chunk: '',
-          accumulated: '',
           done: true,
           streamSequence: 0
         };
@@ -330,7 +329,6 @@ export class AgentComponent extends Component implements RestorableComponent {
         streamId,
         streamType: streamRef?.streamType,
         chunk: streamChunk.chunk,
-        accumulated: streamChunk.accumulated,
         done: streamChunk.done,
         streamSequence: streamSequence++,
         tokensUsed: streamChunk.tokensUsed,
@@ -358,6 +356,7 @@ export class AgentComponent extends Component implements RestorableComponent {
     const response = await this.runAgentCycle(context, streamRef, activationId, streamId);
 
     // Emit as a single stream event with done=true
+    // Note: For non-streaming, the entire output is in the chunk
     const payload: ActivationStreamPayload = {
       activationId,
       agentId: this.id,
@@ -365,7 +364,6 @@ export class AgentComponent extends Component implements RestorableComponent {
       streamId,
       streamType: streamRef?.streamType,
       chunk: response.rawOutput,
-      accumulated: response.rawOutput,
       done: true,
       streamSequence: 0,
       tokensUsed: response.llmMetadata?.tokensUsed,

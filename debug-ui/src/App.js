@@ -52,6 +52,98 @@ export const App = {
       });
     });
 
+    // Group consecutive streaming frames for collapsed display
+    const groupedFrames = computed(() => {
+      const frames = filteredFrames.value;
+      const groups = [];
+      let streamingBuffer = [];
+
+      for (let i = 0; i < frames.length; i++) {
+        const frame = frames[i];
+        const isStreaming = frame.kind === 'in-stream' || frame.kind === 'out-stream';
+
+        if (isStreaming) {
+          streamingBuffer.push(frame);
+        } else {
+          // Flush streaming buffer
+          if (streamingBuffer.length > 0) {
+            if (streamingBuffer.length === 1) {
+              groups.push({ type: 'single', frame: streamingBuffer[0] });
+            } else {
+              // Group streaming frames by activationId
+              const activationId = streamingBuffer[0].streamingActivationId;
+              const reconstructed = reconstructAccumulatedContent(streamingBuffer);
+              groups.push({
+                type: 'streaming-group',
+                frames: streamingBuffer,
+                count: streamingBuffer.length,
+                activationId,
+                kind: streamingBuffer[0].kind,
+                firstSequence: streamingBuffer[streamingBuffer.length - 1].sequence,
+                lastSequence: streamingBuffer[0].sequence,
+                reconstructedContent: reconstructed
+              });
+            }
+            streamingBuffer = [];
+          }
+          groups.push({ type: 'single', frame });
+        }
+      }
+
+      // Flush remaining streaming buffer
+      if (streamingBuffer.length > 0) {
+        if (streamingBuffer.length === 1) {
+          groups.push({ type: 'single', frame: streamingBuffer[0] });
+        } else {
+          const activationId = streamingBuffer[0].streamingActivationId;
+          const reconstructed = reconstructAccumulatedContent(streamingBuffer);
+          groups.push({
+            type: 'streaming-group',
+            frames: streamingBuffer,
+            count: streamingBuffer.length,
+            activationId,
+            kind: streamingBuffer[0].kind,
+            firstSequence: streamingBuffer[streamingBuffer.length - 1].sequence,
+            lastSequence: streamingBuffer[0].sequence,
+            reconstructedContent: reconstructed
+          });
+        }
+      }
+
+      return groups;
+    });
+
+    // Reconstruct accumulated content from streaming frames
+    function reconstructAccumulatedContent(streamingFrames) {
+      // Frames are in descending order by sequence, so reverse for chronological order
+      const chronological = [...streamingFrames].reverse();
+      let accumulated = '';
+      for (const frame of chronological) {
+        // Get chunk from the first event's payload
+        const event = frame.events?.[0];
+        if (event?.payload?.chunk) {
+          accumulated += event.payload.chunk;
+        }
+      }
+      return accumulated;
+    }
+
+    // Track expanded streaming groups
+    const expandedStreamingGroups = ref(new Set());
+
+    function toggleStreamingGroup(groupKey) {
+      if (expandedStreamingGroups.value.has(groupKey)) {
+        expandedStreamingGroups.value.delete(groupKey);
+      } else {
+        expandedStreamingGroups.value.add(groupKey);
+      }
+      expandedStreamingGroups.value = new Set(expandedStreamingGroups.value);
+    }
+
+    function isStreamingGroupExpanded(groupKey) {
+      return expandedStreamingGroups.value.has(groupKey);
+    }
+
     const selectedFrame = computed(() => {
       if (!state.selectedFrameId) return null;
       return state.frames.find(frame => frame.uuid === state.selectedFrameId) || null;
@@ -747,7 +839,13 @@ export const App = {
       isInactiveGroupExpanded,
       expandedComponents,
       toggleComponentDetail,
-      isComponentDetailExpanded
+      isComponentDetailExpanded,
+      // Streaming frame grouping
+      groupedFrames,
+      expandedStreamingGroups,
+      toggleStreamingGroup,
+      isStreamingGroupExpanded,
+      reconstructAccumulatedContent
     };
   },
   template: `
@@ -798,19 +896,53 @@ export const App = {
               placeholder="Search frames by uuid, stream, agent..."
             />
             <div class="frame-list">
-              <div
-                v-for="frame in filteredFrames"
-                :key="frame.uuid"
-                :class="['frame-item', state.selectedFrameId === frame.uuid ? 'active' : '']"
-                @click="selectFrame(frame.uuid)"
-              >
-                <span class="frame-seq">#{{ frame.sequence }}</span>
-                <span class="frame-kind" :class="frame.kind">{{ frame.kind }}</span>
-                <span class="frame-time">{{ formatTimestamp(frame.timestamp).split(' ')[1] }}</span>
-                <span class="frame-stats">{{ frame.deltas?.length || 0 }}op {{ frame.events?.length || 0 }}ev</span>
-                <span v-if="frame.durationMs" class="frame-duration">{{ frame.durationMs.toFixed(0) }}ms</span>
-              </div>
-              <div v-if="!filteredFrames.length" class="text-muted">No frames yet.</div>
+              <template v-for="(group, groupIdx) in groupedFrames" :key="groupIdx">
+                <!-- Single frame (non-streaming or single streaming) -->
+                <div
+                  v-if="group.type === 'single'"
+                  :class="['frame-item', state.selectedFrameId === group.frame.uuid ? 'active' : '', group.frame.kind]"
+                  @click="selectFrame(group.frame.uuid)"
+                >
+                  <span class="frame-seq">#{{ group.frame.sequence }}</span>
+                  <span class="frame-kind" :class="group.frame.kind">{{ group.frame.kind }}</span>
+                  <span class="frame-time">{{ formatTimestamp(group.frame.timestamp).split(' ')[1] }}</span>
+                  <span class="frame-stats">{{ group.frame.deltas?.length || 0 }}op {{ group.frame.events?.length || 0 }}ev</span>
+                  <span v-if="group.frame.durationMs" class="frame-duration">{{ group.frame.durationMs.toFixed(0) }}ms</span>
+                </div>
+
+                <!-- Streaming frame group (collapsible) -->
+                <div v-else-if="group.type === 'streaming-group'" class="streaming-group">
+                  <div
+                    :class="['frame-item', 'streaming-group-header', group.kind]"
+                    @click="toggleStreamingGroup(groupIdx)"
+                  >
+                    <span class="expand-icon">{{ isStreamingGroupExpanded(groupIdx) ? '▼' : '▶' }}</span>
+                    <span class="frame-seq">#{{ group.firstSequence }}-{{ group.lastSequence }}</span>
+                    <span class="frame-kind" :class="group.kind">{{ group.kind }}</span>
+                    <span class="streaming-count">{{ group.count }} streaming frames</span>
+                  </div>
+                  <!-- Expanded: show reconstructed content preview -->
+                  <div v-if="isStreamingGroupExpanded(groupIdx)" class="streaming-group-content">
+                    <div class="streaming-preview">
+                      <div class="streaming-preview-label">Reconstructed content:</div>
+                      <pre class="streaming-preview-text">{{ truncate(group.reconstructedContent, 500) }}</pre>
+                    </div>
+                    <!-- Individual frames -->
+                    <div
+                      v-for="frame in group.frames"
+                      :key="frame.uuid"
+                      :class="['frame-item', 'frame-item-nested', state.selectedFrameId === frame.uuid ? 'active' : '', frame.kind]"
+                      @click.stop="selectFrame(frame.uuid)"
+                    >
+                      <span class="frame-seq">#{{ frame.sequence }}</span>
+                      <span class="frame-kind" :class="frame.kind">{{ frame.kind }}</span>
+                      <span class="frame-time">{{ formatTimestamp(frame.timestamp).split(' ')[1] }}</span>
+                      <span class="frame-stats">seq {{ frame.streamSequence || '?' }}</span>
+                    </div>
+                  </div>
+                </div>
+              </template>
+              <div v-if="!groupedFrames.length" class="text-muted">No frames yet.</div>
               <div
                 v-else-if="state.framePagination.hasMore"
                 class="frame-load-more"

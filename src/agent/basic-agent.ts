@@ -301,14 +301,13 @@ export class BasicAgent implements AgentInterface {
    *
    * @param context - Rendered context for the agent
    * @param streamRef - Optional stream reference for routing
-   * @yields Streaming chunks with accumulated content
+   * @yields Streaming chunks (without accumulated content - ResponseHandler tracks accumulation)
    */
   async *runCycleStreaming(
     context: RenderedContext,
     streamRef?: StreamRef
   ): AsyncIterable<{
     chunk: string;
-    accumulated: string;
     done: boolean;
     tokensUsed?: number;
     modelId?: string;
@@ -337,7 +336,8 @@ export class BasicAgent implements AgentInterface {
       });
 
       // Stream from LLM
-      let accumulated = '';
+      // Note: We don't track accumulated here - ResponseHandler does that internally
+      let totalChars = 0;
       let lastTokensUsed: number | undefined;
       let lastModelId: string | undefined;
 
@@ -350,7 +350,7 @@ export class BasicAgent implements AgentInterface {
           formatConfig: this.buildFormatConfig()
         }
       )) {
-        accumulated += chunk.content;
+        totalChars += chunk.content.length;
 
         if (chunk.done) {
           lastTokensUsed = chunk.tokensUsed;
@@ -359,14 +359,13 @@ export class BasicAgent implements AgentInterface {
 
         yield {
           chunk: chunk.content,
-          accumulated,
           done: chunk.done,
           tokensUsed: chunk.tokensUsed,
           modelId: chunk.modelId
         };
       }
 
-      console.log(`[BasicAgent] Streaming complete (${accumulated.length} chars)`);
+      console.log(`[BasicAgent] Streaming complete (${totalChars} chars)`);
 
       this.tracer?.record({
         id: `llm-stream-response-${Date.now()}`,
@@ -378,8 +377,7 @@ export class BasicAgent implements AgentInterface {
         data: {
           provider: this.llmProvider.getProviderName(),
           tokensUsed: lastTokensUsed,
-          responseLength: accumulated.length,
-          content: accumulated.substring(0, 200) + '...',
+          responseLength: totalChars,
           streaming: true
         },
         parentId: cycleSpan?.id

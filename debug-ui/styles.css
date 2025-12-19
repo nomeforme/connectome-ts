@@ -810,6 +810,18 @@ body {
   border-color: rgba(34, 197, 94, 0.25);
 }
 
+.frame-kind.in-stream {
+  background: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.25);
+}
+
+.frame-kind.out-stream {
+  background: rgba(236, 72, 153, 0.15);
+  color: #ec4899;
+  border-color: rgba(236, 72, 153, 0.25);
+}
+
 .frame-time {
   color: var(--text-muted);
   font-size: 0.68rem;
@@ -2235,4 +2247,109 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+/* Streaming frame group styles */
+.streaming-group {
+  margin: 2px 0;
+}
+
+.streaming-group-header {
+  cursor: pointer;
+  background: rgba(251, 191, 36, 0.08);
+  border-left: 3px solid rgba(251, 191, 36, 0.4);
+}
+
+.streaming-group-header:hover {
+  background: rgba(251, 191, 36, 0.15);
+}
+
+.streaming-group-header .expand-icon {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-right: 4px;
+}
+
+.streaming-count {
+  font-size: 0.72rem;
+  color: #fbbf24;
+  font-weight: 500;
+  margin-left: auto;
+}
+
+.streaming-group-content {
+  border-left: 3px solid rgba(251, 191, 36, 0.25);
+  margin-left: 8px;
+  padding-left: 4px;
+}
+
+.streaming-preview {
+  padding: 8px;
+  background: rgba(251, 191, 36, 0.06);
+  border-radius: 4px;
+  margin: 4px 0;
+}
+
+.streaming-preview-label {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.streaming-preview-text {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 6px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+}
+
+.frame-item-nested {
+  font-size: 0.82rem;
+  padding: 3px 8px;
+  opacity: 0.85;
+}
+
+.frame-item-nested:hover {
+  opacity: 1;
+}
+
+/* In-stream frame item styling */
+.frame-item.in-stream {
+  border-left: 2px solid rgba(251, 191, 36, 0.3);
+}
+
+.frame-item.out-stream {
+  border-left: 2px solid rgba(236, 72, 153, 0.3);
+}
+
+/* Pill styles for streaming kinds */
+.pill.in-stream,
+.meta-pill.kind.in-stream {
+  background: rgba(251, 191, 36, 0.18);
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.3);
+}
+
+.pill.out-stream,
+.meta-pill.kind.out-stream {
+  background: rgba(236, 72, 153, 0.18);
+  color: #ec4899;
+  border-color: rgba(236, 72, 153, 0.3);
+}
+
+/* Timeline node streaming styles */
+.timeline-node.in-stream {
+  background: rgba(251, 191, 36, 0.18);
+  border-color: rgba(251, 191, 36, 0.3);
+}
+
+.timeline-node.out-stream {
+  background: rgba(236, 72, 153, 0.18);
+  border-color: rgba(236, 72, 153, 0.3);
 }

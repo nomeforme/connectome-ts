@@ -47,11 +47,13 @@ interface DebugEventRecord {
   timestamp: number;
 }
 
+type FrameKind = 'incoming' | 'outgoing' | 'in-stream' | 'out-stream';
+
 interface DebugFrameRecord {
   uuid: string;
   sequence: number;
   timestamp: string;
-  kind: 'incoming' | 'outgoing';
+  kind: FrameKind;
   deltas: any[];
   events: DebugEventRecord[];
   components?: DebugComponentSnapshot[];
@@ -67,6 +69,10 @@ interface DebugFrameRecord {
   renderedContext?: RenderedContext;
   /** Sub-cycle trace for debugging sync event processing */
   subCycleTrace?: import('../spaces/types').SubCycleInfo[];
+  /** For streaming frames: the activation ID this stream belongs to */
+  streamingActivationId?: string;
+  /** For streaming frames: sequence number within the stream */
+  streamSequence?: number;
 }
 
 interface DebugMetrics {
@@ -175,16 +181,19 @@ class DebugStateTracker extends EventEmitter implements DebugObserver {
 
   onFrameStart(frame: Frame, context: DebugFrameStartContext): void {
     const uuid = frame.uuid || deterministicUUID(`frame-${frame.sequence}`);
+    const inferred = inferFrameKind(frame, 'incoming');
     const record: DebugFrameRecord = {
       uuid,
       sequence: frame.sequence,
       timestamp: frame.timestamp,
-      kind: inferFrameKind(frame, 'incoming'),
+      kind: inferred.kind,
       events: [],
       deltas: [],
       components: context.components,
       queueLength: context.queuedEvents,
-      activeStream: frame.activeStream
+      activeStream: frame.activeStream,
+      streamingActivationId: inferred.streamingActivationId,
+      streamSequence: inferred.streamSequence
     };
     this.insertFrame(record);
     this.metrics.frameCount += 1;
@@ -219,8 +228,15 @@ class DebugStateTracker extends EventEmitter implements DebugObserver {
     record.executions = context.componentExecutions;
     record.activeStream = frame.activeStream;
     record.events = sanitizeFrameEvents(frame, record.uuid);
-    record.kind = inferFrameKind(frame, record.kind);
-    
+
+    // Update kind with final inference (may have more info now)
+    const inferred = inferFrameKind(frame, record.kind);
+    record.kind = inferred.kind;
+    if (inferred.streamingActivationId) {
+      record.streamingActivationId = inferred.streamingActivationId;
+      record.streamSequence = inferred.streamSequence;
+    }
+
     // Include sub-cycle trace if present
     if (frame.subCycleTrace && frame.subCycleTrace.length > 0) {
       record.subCycleTrace = frame.subCycleTrace;
@@ -237,11 +253,12 @@ class DebugStateTracker extends EventEmitter implements DebugObserver {
 
   onAgentFrame(frame: Frame, context: DebugAgentFrameContext): void {
     const uuid = frame.uuid || deterministicUUID(`agent-${frame.sequence}`);
+    const inferred = inferFrameKind(frame, 'outgoing');
     const record: DebugFrameRecord = {
       uuid,
       sequence: frame.sequence,
       timestamp: frame.timestamp,
-      kind: inferFrameKind(frame, 'outgoing'),
+      kind: inferred.kind,
       events: sanitizeFrameEvents(frame, uuid),
       deltas: frame.deltas.map(op => sanitizePayload(op)),
       agent: context.agentId || context.agentName ? {
@@ -249,9 +266,11 @@ class DebugStateTracker extends EventEmitter implements DebugObserver {
         name: context.agentName
       } : undefined,
       activeStream: frame.activeStream,
-      subCycleTrace: frame.subCycleTrace && frame.subCycleTrace.length > 0 
-        ? frame.subCycleTrace 
-        : undefined
+      subCycleTrace: frame.subCycleTrace && frame.subCycleTrace.length > 0
+        ? frame.subCycleTrace
+        : undefined,
+      streamingActivationId: inferred.streamingActivationId,
+      streamSequence: inferred.streamSequence
     };
 
     if ((frame as any).renderedContext) {
@@ -360,25 +379,47 @@ class DebugStateTracker extends EventEmitter implements DebugObserver {
 
 }
 
+interface InferredFrameInfo {
+  kind: FrameKind;
+  streamingActivationId?: string;
+  streamSequence?: number;
+}
+
 function inferFrameKind(
   frame: Frame,
-  fallback: 'incoming' | 'outgoing' = 'incoming'
-): 'incoming' | 'outgoing' {
+  fallback: FrameKind = 'incoming'
+): InferredFrameInfo {
   if (Array.isArray(frame.events)) {
+    // Check for streaming events first (activation:stream)
+    for (const event of frame.events) {
+      if (event?.topic === 'activation:stream') {
+        const payload = event.payload as any;
+        return {
+          kind: 'in-stream',
+          streamingActivationId: payload?.activationId,
+          streamSequence: payload?.streamSequence
+        };
+      }
+      // Future: out-stream for speech synthesis, etc.
+      // if (event?.topic === 'speech:stream') {
+      //   return { kind: 'out-stream', ... };
+      // }
+    }
+
     // Check for agent-generated events by looking at VEIL operations from agent components
     const hasAgentEvents = frame.events.some(event => {
       if (event?.topic === 'veil:operation' && event.source) {
         // Check if source is an agent element/component
-        return event.source.componentId?.includes('agent') || 
+        return event.source.componentId?.includes('agent') ||
                event.source.componentType?.includes('Agent');
       }
       return false;
     });
     if (hasAgentEvents) {
-      return 'outgoing';
+      return { kind: 'outgoing' };
     }
   }
-  return fallback;
+  return { kind: fallback };
 }
 
 function sanitizeFrameEvents(
@@ -495,26 +536,28 @@ export class DebugServer {
   private loadHistoricalFrames(): void {
     const veilState = this.veilState.getState();
     const frameHistory = veilState.frameHistory;
-    
+
     // Convert VEIL frames to debug frame records
     frameHistory.forEach(frame => {
-      const inferredKind = inferFrameKind(frame, 'incoming');
-      const uuid = frame.uuid || deterministicUUID(`${inferredKind}-${frame.sequence}`);
+      const inferred = inferFrameKind(frame, 'incoming');
+      const uuid = frame.uuid || deterministicUUID(`${inferred.kind}-${frame.sequence}`);
 
       const record: DebugFrameRecord = {
         uuid,
         sequence: frame.sequence,
         timestamp: frame.timestamp,
-        kind: inferredKind,
+        kind: inferred.kind,
         events: sanitizeFrameEvents(frame, uuid),
         deltas: (frame.deltas || []).map((op: any) => sanitizePayload(op)),
         queueLength: 0,
         activeStream: frame.activeStream,
-        subCycleTrace: frame.subCycleTrace && frame.subCycleTrace.length > 0 
-          ? frame.subCycleTrace 
-          : undefined
+        subCycleTrace: frame.subCycleTrace && frame.subCycleTrace.length > 0
+          ? frame.subCycleTrace
+          : undefined,
+        streamingActivationId: inferred.streamingActivationId,
+        streamSequence: inferred.streamSequence
       };
-      
+
       // Add the frame to the tracker
       this.tracker.loadHistoricalFrame(record);
     });
