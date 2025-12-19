@@ -11,7 +11,6 @@ import {
   AfferentError
 } from '../spaces/receptor-effector-types';
 import { SpaceEvent } from '../spaces/types';
-import { Element } from '../spaces/element';
 import { Component } from '../spaces/component';
 
 /**
@@ -86,24 +85,15 @@ export abstract class BaseAfferent<TConfig = any, TCommand = any>
   
   // Afferent interface methods (required by Afferent<T>)
   
-  async mount(element: Element): Promise<void> {
-    this.element = element;
-    // Initialize will be called separately by effector or onReferencesResolved
-  }
-  
-  async unmount(): Promise<void> {
-    await this.stop(true);
-    // Note: element is marked with ! so we don't set it to undefined
-  }
+  // Removed mount(element) as Component handles attachment via _attach and onMount
   
   // Override Component lifecycle methods
   
-  async onMount(): Promise<void> {
-    // No-op - mount() is called instead for afferents
-  }
+  // Afferents are initialized via initialize() called by the host/environment
+  // onMount can be overridden for additional setup if needed
   
   async onUnmount(): Promise<void> {
-    // No-op - unmount() is called instead for afferents
+    await this.stop(true);
   }
   
   async onDestroy(): Promise<void> {
@@ -203,7 +193,18 @@ export abstract class BaseAfferent<TConfig = any, TCommand = any>
   // Helper methods
   
   protected emit(event: SpaceEvent): void {
-    this.context.emit(event);
+    // Use Component's space access to emit directly
+    if (this.space) {
+      this.space.emit({
+        ...event,
+        source: this.getRef(), // Use Component.getRef shim
+        timestamp: event.timestamp || Date.now()
+      });
+    } else if (this.context && this.context.emit) {
+       // Fallback to context if not mounted
+       this.context.emit(event);
+    }
+    
     this.metrics.eventsEmitted++;
     this.status.lastActivity = Date.now();
   }
@@ -215,7 +216,7 @@ export abstract class BaseAfferent<TConfig = any, TCommand = any>
   protected emitFacet(facet: import('../veil/types').Facet): void {
     this.emit({
       topic: 'veil:operation',
-      source: { elementId: this.element?.id || 'afferent', elementPath: [] },
+      source: this.getRef(),
       timestamp: Date.now(),
       payload: {
         operation: {
@@ -238,15 +239,19 @@ export abstract class BaseAfferent<TConfig = any, TCommand = any>
       this.status.state = 'error';
     }
     
-    this.context.emitError({
-      afferentId: this.context.afferentId,
-      afferentType: this.constructor.name,
-      errorType: type,
-      message,
-      stack: error?.stack,
-      recoverable: type !== 'fatal',
-      details: error
-    });
+    if (this.context && this.context.emitError) {
+      this.context.emitError({
+        afferentId: this.context.afferentId,
+        afferentType: this.constructor.name,
+        errorType: type,
+        message,
+        stack: error?.stack,
+        recoverable: type !== 'fatal',
+        details: error
+      });
+    } else {
+      console.error(`[Afferent Error] ${type}: ${message}`, error);
+    }
   }
   
   // Command processing loop

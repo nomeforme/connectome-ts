@@ -19,6 +19,7 @@ import { getGlobalTracer, TraceCategory } from '../tracing';
 import { VEILStateManager } from '../veil/veil-state';
 import { FrameRenderCache } from './frame-render-cache';
 import { RenderContext, CachedChunk } from './render-context-types';
+import { stripTurnMarkers } from '../utils/turn-markers';
 
 export class FrameTrackingHUD implements CompressibleHUD {
   private frameRenderCache: FrameRenderCache;
@@ -393,8 +394,31 @@ export class FrameTrackingHUD implements CompressibleHUD {
               content = `<thought>${facet.content}</thought>`;
           }
               break;
+
+          case 'action-result': {
+            // ActionResultFacet has fields at top level, not in state
+            const actionResultFacet = facet as {
+              actionId?: string;
+              success?: boolean;
+              result?: unknown;
+              error?: string;
+              message?: string;
+              alias?: string;
+            };
+            content = this.renderToolResult(
+              actionResultFacet.actionId || facet.id,
+              actionResultFacet.success ?? false,
+              actionResultFacet.result,
+              actionResultFacet.error,
+              actionResultFacet.message,
+              actionResultFacet.alias
+            );
+            break;
+          }
             }
-        
+
+        content = stripTurnMarkers(content);
+
         if (content) {
           contentParts.push({ content, facetId: facet.id, type: facet.type, facet });
         }
@@ -471,15 +495,19 @@ export class FrameTrackingHUD implements CompressibleHUD {
     }
     
     // Check for user input (facets with speech children that lack agentId)
+    // Search recursively since speech may be nested (e.g., history → message → speech)
+    const findUserSpeechRecursive = (node: any): boolean => {
+      if (!node) return false;
+      if ((node.type === 'speech' || node.type === 'thought') && !node.agentId) return true;
+      if (Array.isArray(node.children)) {
+        return node.children.some((child: any) => findUserSpeechRecursive(child));
+      }
+      return false;
+    };
+
     const hasUserInput = frame.deltas?.some(delta => {
       if (delta.type === 'addFacet' && delta.facet) {
-        const facet = delta.facet as any;
-        // Any facet with speech children (without agentId) is user input
-        if (Array.isArray(facet.children)) {
-          return facet.children.some((child: any) => 
-            child.type === 'speech' && !child.agentId
-          );
-        }
+        return findUserSpeechRecursive(delta.facet);
       }
       return false;
     });
@@ -536,6 +564,7 @@ export class FrameTrackingHUD implements CompressibleHUD {
       'state',              // Tool results, component state (in frames)
       'agent-activation',   // Activation triggers (in frames)
       'component-state',    // Component status changes (in frames)
+      'action-result',      // Tool/script execution results (feedback to agent)
     ];
 
     if (userContextTypes.includes(facet.type)) {
@@ -552,23 +581,31 @@ export class FrameTrackingHUD implements CompressibleHUD {
     }
     
     // Container facets with speech children = conversational
-    const children = (facet as any).children;
-    if (Array.isArray(children) && children.length > 0) {
-      const speechChild = children.find((c: any) => 
-        c.type === 'speech' || c.type === 'thought'
-      );
-      
-      if (speechChild) {
-        // Has speech - check if from agent
-        if (speechChild.agentId) {
-          // Agent's speech (check multi-agent)
-          return currentAgentId && speechChild.agentId !== currentAgentId
-            ? 'user'      // Other agent
-            : 'assistant'; // Current agent
+    // Search recursively since speech may be nested (e.g., history → message → speech)
+    const findSpeechRecursive = (node: any): any => {
+      if (!node) return null;
+      if (node.type === 'speech' || node.type === 'thought') return node;
+      if (Array.isArray(node.children)) {
+        for (const child of node.children) {
+          const found = findSpeechRecursive(child);
+          if (found) return found;
         }
-        // Speech without agentId = user input
-        return 'user';
       }
+      return null;
+    };
+
+    const speechChild = findSpeechRecursive(facet);
+    // Don't match if the facet itself is speech (already handled above)
+    if (speechChild && speechChild !== facet) {
+      // Has speech - check if from agent
+      if (speechChild.agentId) {
+        // Agent's speech (check multi-agent)
+        return currentAgentId && speechChild.agentId !== currentAgentId
+          ? 'user'      // Other agent
+          : 'assistant'; // Current agent
+      }
+      // Speech without agentId = user input
+      return 'user';
     }
     
     // ===== LEVEL 4: Events - Distinguish System vs User =====
@@ -1091,6 +1128,26 @@ export class FrameTrackingHUD implements CompressibleHUD {
       ? ((facet as any).children as Facet[])
       : [];
 
+    // Special handling for action-result facets (have fields at top level, not content)
+    if (facet.type === 'action-result') {
+      const actionResultFacet = facet as {
+        actionId?: string;
+        success?: boolean;
+        result?: unknown;
+        error?: string;
+        message?: string;
+        alias?: string;
+      };
+      return this.renderToolResult(
+        actionResultFacet.actionId || facet.id,
+        actionResultFacet.success ?? false,
+        actionResultFacet.result,
+        actionResultFacet.error,
+        actionResultFacet.message,
+        actionResultFacet.alias
+      );
+    }
+
     // Skip facets with no content AND no children
     if (!facetContent && facetChildren.length === 0) {
       return null;
@@ -1191,16 +1248,44 @@ export class FrameTrackingHUD implements CompressibleHUD {
   }
   
   private renderToolCall(toolName: string, parameters: any): string {
-    const parts = [`<tool_call name="${toolName}">`];
-    
+    // Render as <action> to match what the agent writes
+    const parts = [`<action name="${toolName}">`];
+
     for (const [key, value] of Object.entries(parameters)) {
       parts.push(`<parameter name="${key}">${this.escapeXml(String(value))}</parameter>`);
     }
-    
-    parts.push('</tool_call>');
+
+    parts.push('</action>');
     return parts.join('\n');
   }
-  
+
+  private renderToolResult(actionId: string, success: boolean, result: unknown, error?: string, message?: string, alias?: string): string {
+    // Render as <action_result> to pair with <action>
+    // Include alias attribute if provided (for correlating results with actions)
+    const aliasAttr = alias ? ` alias="${this.escapeXml(alias)}"` : '';
+    const parts = [`<action_result action_id="${this.escapeXml(actionId)}"${aliasAttr} success="${success}">`];
+
+    if (success) {
+      if (result !== undefined) {
+        // Render result - if it's an object, JSON stringify it
+        const resultStr = typeof result === 'object' ? JSON.stringify(result, null, 2) : String(result);
+        parts.push(this.escapeXml(resultStr));
+      } else if (message) {
+        parts.push(this.escapeXml(message));
+      }
+    } else {
+      // Error case
+      if (error) {
+        parts.push(`Error: ${this.escapeXml(error)}`);
+      } else if (message) {
+        parts.push(this.escapeXml(message));
+      }
+    }
+
+    parts.push('</action_result>');
+    return parts.join('\n');
+  }
+
   private renderAction(action: any): string {
     // Render as the original @path syntax (e.g., @chat.general.say)
     const actionPath = action.path.join('.');
@@ -1354,6 +1439,38 @@ export class FrameTrackingHUD implements CompressibleHUD {
         }
         
         messages.push(message);
+      }
+    }
+    
+    // Apply format config for prefill
+    // Build the prefill content: <my_turn>\n<thinking>\n if both enabled
+    let prefillContent = '';
+    
+    // Start with assistant prefix if present (e.g., "<my_turn>\n")
+    if (config.formatConfig?.assistant?.prefix) {
+      prefillContent += config.formatConfig.assistant.prefix;
+    }
+    
+    // Add thinking open tag INSIDE the turn if enabled
+    // Result: <my_turn>\n<thinking>\n...reasoning...</thinking>\n...response...\n</my_turn>
+    const thinkingConfig = config.formatConfig?.thinking;
+    if (thinkingConfig?.enabled) {
+      const thinkingOpenTag = thinkingConfig.openTag ?? '<thinking>\n';
+      prefillContent += thinkingOpenTag;
+    }
+    
+    // Apply the prefill if we have content
+    if (prefillContent) {
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage && lastMessage.role === 'assistant') {
+        // Add prefill to existing assistant message
+        lastMessage.content = prefillContent + lastMessage.content;
+      } else {
+        // Add new assistant message with prefill content
+        messages.push({
+          role: 'assistant',
+          content: prefillContent
+        });
       }
     }
     
@@ -1544,16 +1661,33 @@ export class FrameTrackingHUD implements CompressibleHUD {
     }
     
     // Apply format config for prefill
+    // Build the prefill content: <my_turn>\n<thinking>\n if both enabled
+    let prefillContent = '';
+    
+    // Start with assistant prefix if present (e.g., "<my_turn>\n")
     if (config.formatConfig?.assistant?.prefix) {
+      prefillContent += config.formatConfig.assistant.prefix;
+    }
+    
+    // Add thinking open tag INSIDE the turn if enabled
+    // Result: <my_turn>\n<thinking>\n...reasoning...</thinking>\n...response...\n</my_turn>
+    const thinkingConfig = config.formatConfig?.thinking;
+    if (thinkingConfig?.enabled) {
+      const thinkingOpenTag = thinkingConfig.openTag ?? '<thinking>\n';
+      prefillContent += thinkingOpenTag;
+    }
+    
+    // Apply the prefill if we have content
+    if (prefillContent) {
       const lastMessage = messages[messages.length - 1];
       if (lastMessage && lastMessage.role === 'assistant') {
-        // Add prefix to existing assistant message
-        lastMessage.content = config.formatConfig.assistant.prefix + lastMessage.content;
+        // Add prefill to existing assistant message
+        lastMessage.content = prefillContent + lastMessage.content;
       } else {
-        // Add new assistant message with just the prefix for prefill
+        // Add new assistant message with prefill content
         messages.push({
           role: 'assistant',
-          content: config.formatConfig.assistant.prefix
+          content: prefillContent
         });
       }
     }

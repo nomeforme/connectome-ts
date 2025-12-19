@@ -84,6 +84,9 @@ export interface AgentInfo {
 // Import SpaceEvent for frame events
 import type { SpaceEvent } from '../spaces/types';
 
+// Import SubCycleInfo for frame metadata
+import type { SubCycleInfo } from '../spaces/types';
+
 // VEIL Frames - NOW UNIFIED!
 export interface Frame {
   sequence: number;
@@ -93,17 +96,39 @@ export interface Frame {
   events: SpaceEvent[];    // Events processed in this frame
   deltas: VEILDelta[];     // Exotemporal changes
   transition: FrameTransition;
-  
+
   /**
    * Optional: Snapshot of how this frame rendered at creation time
-   * 
+   *
    * Captures the original subjective experience as chunked rendered content.
    * Preserves what this frame looked like when it was created, even if later
    * transforms modify earlier frames.
-   * 
+   *
    * May not be present on older frames or if snapshot capture is disabled.
    */
   renderedSnapshot?: FrameRenderedSnapshot;
+  
+  /**
+   * Optional: Sub-cycle trace for debugging.
+   * Records information about sync events that triggered sub-cycles within this frame.
+   */
+  subCycleTrace?: SubCycleInfo[];
+}
+
+/**
+ * Readonly view of a Frame for component execution contexts.
+ * Components can read frame metadata and deltas but cannot mutate them.
+ */
+export interface ReadonlyFrame {
+  readonly sequence: number;
+  readonly timestamp: string;
+  readonly uuid?: string;
+  readonly activeStream?: StreamRef;
+  readonly events: readonly SpaceEvent[];
+  readonly deltas: readonly VEILDelta[];
+  readonly transition: FrameTransition;
+  readonly renderedSnapshot?: FrameRenderedSnapshot;
+  readonly subCycleTrace?: readonly SubCycleInfo[];
 }
 
 
@@ -159,4 +184,24 @@ export interface VEILState {
   // Cached current state for state facets (performance optimization)
   // Maps state facet ID → current computed state after applying all state-changes
   currentStateCache: Map<string, any>;
+}
+
+/**
+ * Read-only view of VEIL state
+ */
+export interface ReadonlyVEILState {
+  facets: ReadonlyMap<string, Facet>;
+  scopes: ReadonlySet<string>;
+  streams: ReadonlyMap<string, any>;
+  agents: ReadonlyMap<string, AgentInfo>;
+  currentStream?: StreamRef;
+  currentAgent?: string;
+  frameHistory: ReadonlyArray<Frame>;
+  currentSequence: number;
+  removals: ReadonlyMap<string, 'hide' | 'delete'>;
+  
+  // Helper methods
+  getFacetsByType(type: string): Facet[];
+  getFacetsByAspect(aspect: keyof Facet, value: any): Facet[];
+  hasFacet(id: string): boolean;
 }

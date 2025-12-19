@@ -1,30 +1,37 @@
 /**
- * Console Receptors and Effectors for the new architecture
+ * Console Receptors and Effectors - FLEX Architecture
+ *
+ * FLEX Components for console input/output handling.
  */
 
-import { BaseReceptor, BaseEffector } from './base-martem';
-import { 
-  Receptor, 
-  Effector, 
+import { Component } from '../spaces/component';
+import { ExecutionContext, SpaceEvent } from '../spaces/types';
+import {
   ReadonlyVEILState,
   FacetDelta,
-  EffectorResult
+  FacetFilter
 } from '../spaces/receptor-effector-types';
-import { SpaceEvent } from '../spaces/types';
-import { Facet, hasContentAspect, VEILDelta } from '../veil/types';
+import { hasContentAspect, VEILDelta } from '../veil/types';
 import { createAgentActivation, createEventFacet, wrapFacetsAsDeltas } from '../helpers/factories';
+import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
 
 /**
  * Converts console input events into message AND activation facets
+ *
+ * FLEX Component (constraint: priority 100 - Receptor level)
  */
-export class ConsoleInputReceptor extends BaseReceptor {
+export class ConsoleInputReceptor extends Component {
+  constraints = [priorityConstraint(ComponentPriority.RECEPTOR)];
   topics = ['console:input'];
-  
-  transform(event: SpaceEvent, state: ReadonlyVEILState): VEILDelta[] {
+
+  execute(context: ExecutionContext): void {
+    const { event, state } = context;
+    if (!event || event.topic !== 'console:input') return;
+
     const payload = event.payload as { input: string; timestamp?: number };
     const timestamp = payload.timestamp || Date.now();
     const messageId = `console-msg-${timestamp}-${Math.random().toString(36).substr(2, 9)}`;
-    
+
     const messageFacet = createEventFacet({
       id: messageId,
       content: payload.input,
@@ -45,41 +52,53 @@ export class ConsoleInputReceptor extends BaseReceptor {
         streamType: 'console'
       }
     });
-    
-    return wrapFacetsAsDeltas([messageFacet, activationFacet]);
+
+    for (const delta of wrapFacetsAsDeltas([messageFacet, activationFacet])) {
+      this.addOperation(delta);
+    }
   }
 }
 
 /**
  * Watches for speech facets and outputs to console
+ *
+ * FLEX Component (constraint: priority 300 - Effector level)
  */
-export class ConsoleOutputEffector extends BaseEffector {
-  facetFilters = [{
+export class ConsoleOutputEffector extends Component {
+  constraints = [priorityConstraint(ComponentPriority.EFFECTOR)];
+
+  facetFilters: FacetFilter[] = [{
     type: 'speech'
   }];
-  
+
   constructor(
     private write: (content: string) => void = console.log
   ) {
     super();
   }
-  
-  async process(changes: FacetDelta[], state: ReadonlyVEILState): Promise<EffectorResult> {
-    const externalActions = [];
-    
+
+  execute(context: ExecutionContext): void {
+    const { frame, state } = context;
+    if (!frame) return;
+
+    // Build changes from frame deltas
+    const changes: FacetDelta[] = [];
+    if (frame.deltas) {
+      for (const delta of frame.deltas) {
+        if (delta.type === 'addFacet' && delta.facet.type === 'speech') {
+          changes.push({ type: 'added', facet: delta.facet });
+        }
+      }
+    }
+
+    if (changes.length === 0) return;
+
+    // Process speech facets
     for (const change of changes) {
       if (change.type === 'added' && hasContentAspect(change.facet)) {
         // Output to console
         this.write(`\n${change.facet.content}\n`);
-        
-        externalActions.push({
-          type: 'console-output',
-          description: `Output to console`,
-          content: change.facet.content
-        });
       }
     }
-    
-    return { externalActions };
   }
 }

@@ -4,44 +4,51 @@
  * These receptors handle panel events and create VEIL facets declaratively.
  */
 
-import { BaseReceptor } from '../components/base-martem';
+import { Component } from '../spaces/component';
+import type { ExecutionContext } from '../spaces/types';
 import type { VEILDelta } from '../veil/types';
 import type { SpaceEvent } from '../spaces/types';
+import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
 
 /**
  * Receptor that creates action-definition and instruction facets
  * when panel tools are registered (declarative pattern)
  */
-export class ControlPanelActionsReceptor extends BaseReceptor {
+export class ControlPanelActionsReceptor extends Component {
+  constraints = [priorityConstraint(ComponentPriority.RECEPTOR)];
   topics = ['panel:tools-registered'];
 
-  transform(event: SpaceEvent, state: any): VEILDelta[] {
+  execute(context: ExecutionContext): void {
+    const event = context.event;
+    if (!event || event.topic !== 'panel:tools-registered') return;
+
     const payload = event.payload as any;
+    if (!payload || !payload.tools || !Array.isArray(payload.tools)) {
+      console.warn('[ControlPanelActionsReceptor] Invalid payload - missing tools array');
+      return;
+    }
 
     console.log('[ControlPanelActionsReceptor] Panel tools registered:', {
       panelId: payload.panelId,
-      elementId: payload.elementId,
-      toolCount: payload.tools?.length || 0
+      componentId: payload.componentId,
+      toolCount: payload.tools.length
     });
 
-    if (!payload.tools || !Array.isArray(payload.tools)) {
-      console.warn('[ControlPanelActionsReceptor] No tools array in payload');
-      return [];
-    }
-
-    const deltas: VEILDelta[] = [];
+    // Use panelId (e.g. "discord-control") as the tool namespace if available
+    // This ensures friendly tool names like "discord-control.open" instead of "elem_123.open"
+    const targetId = payload.panelId || payload.componentId;
 
     // Create facets for panel control actions (open/close)
-    deltas.push({
+    this.addOperation({
       type: 'addFacet',
       facet: {
-        id: `action-def-${payload.elementId}-open`,
+        id: `action-def-${payload.componentId}-open`,
         type: 'action-definition',
-        displayName: `${payload.elementId}.open`,
+        displayName: `${targetId}.open`,
         attributes: {
-          toolName: `${payload.elementId}.open`,
+          toolName: `${targetId}.open`,
           actionName: 'open',
-          elementId: payload.elementId,
+          componentId: payload.componentId, // Use actual component ID for action routing
           description: `Open the ${payload.displayName} panel to access its tools`,
           parameters: {},
           category: payload.panelId
@@ -49,26 +56,26 @@ export class ControlPanelActionsReceptor extends BaseReceptor {
       }
     });
 
-    deltas.push({
+    this.addOperation({
       type: 'addFacet',
       facet: {
-        id: `tool-instruction-${payload.elementId}-open`,
+        id: `tool-instruction-${payload.componentId}-open`,
         type: 'ambient',
         displayName: 'tool-instruction',
-        content: `Open ${payload.displayName} panel: {@${payload.elementId}.open()}`
+        content: `To access ${payload.displayName} tools: {@${targetId}.open()}`
       }
     });
 
-    deltas.push({
+    this.addOperation({
       type: 'addFacet',
       facet: {
-        id: `action-def-${payload.elementId}-close`,
+        id: `action-def-${payload.componentId}-close`,
         type: 'action-definition',
-        displayName: `${payload.elementId}.close`,
+        displayName: `${targetId}.close`,
         attributes: {
-          toolName: `${payload.elementId}.close`,
+          toolName: `${targetId}.close`,
           actionName: 'close',
-          elementId: payload.elementId,
+          componentId: payload.componentId, // Use actual component ID for action routing
           description: `Close the ${payload.displayName} panel`,
           parameters: {},
           category: payload.panelId,
@@ -77,32 +84,33 @@ export class ControlPanelActionsReceptor extends BaseReceptor {
       }
     });
 
-    deltas.push({
+    this.addOperation({
       type: 'addFacet',
       facet: {
-        id: `tool-instruction-${payload.elementId}-close`,
+        id: `tool-instruction-${payload.componentId}-close`,
         type: 'ambient',
         displayName: 'tool-instruction',
-        content: `Close this panel: {@${payload.elementId}.close()}`,
+        content: `To close this panel: {@${targetId}.close()}`,
         scope: [payload.panelScope]  // Only visible when open
       }
     });
 
     // Create facets for each registered tool
+    let facetCount = 4; // Already created 4 facets above
     for (const tool of payload.tools) {
-      const toolName = `${payload.elementId}.${tool.name}`;
+      const toolName = `${targetId}.${tool.name}`;
 
       // Action definition facet
-      deltas.push({
+      this.addOperation({
         type: 'addFacet',
         facet: {
-          id: `action-def-${payload.elementId}-${tool.name}`,
+          id: `action-def-${payload.componentId}-${tool.name}`,
           type: 'action-definition',
           displayName: toolName,
           attributes: {
             toolName,
             actionName: tool.name,
-            elementId: payload.elementId,
+            componentId: payload.componentId, // Use actual component ID for action routing
             description: tool.description || `Perform ${tool.name} action`,
             parameters: tool.params || {},
             category: tool.category,
@@ -112,51 +120,58 @@ export class ControlPanelActionsReceptor extends BaseReceptor {
       });
 
       // Instruction facet (renderable to agent)
-      deltas.push({
+      // Replace any internal ID references in instructions with friendly ID
+      const instructions = tool.instructions.replace(
+        new RegExp(`{@${payload.componentId}\\.`, 'g'),
+        `{@${targetId}.`
+      );
+
+      this.addOperation({
         type: 'addFacet',
         facet: {
-          id: `tool-instruction-${payload.elementId}-${tool.name}`,
+          id: `tool-instruction-${payload.componentId}-${tool.name}`,
           type: 'ambient',
           displayName: 'tool-instruction',
-          content: tool.instructions,
+          content: instructions,
           scope: tool.scope  // Panel-scoped
         }
       });
+
+      facetCount += 2;
     }
 
-    console.log(`[ControlPanelActionsReceptor] Created ${deltas.length} facets for panel ${payload.panelId}`);
-
-    return deltas;
+    console.log(`[ControlPanelActionsReceptor] Created ${facetCount} facets for panel ${payload.panelId}`);
   }
 }
 
 /**
  * Receptor that handles panel scope activation/deactivation
  */
-export class PanelScopeReceptor extends BaseReceptor {
+export class PanelScopeReceptor extends Component {
+  constraints = [priorityConstraint(ComponentPriority.RECEPTOR)];
   topics = ['panel:scope-change'];
 
-  transform(event: SpaceEvent, state: any): VEILDelta[] {
+  execute(context: ExecutionContext): void {
+    const event = context.event;
+    if (event.topic !== 'panel:scope-change') return;
+
     const { scope, active } = event.payload as any;
     const scopeFacetId = `scope-${scope}`;
+    const state = context.state;
 
     console.log(`[PanelScopeReceptor] ${active ? 'Activating' : 'Deactivating'} scope: ${scope}`);
 
     // Check if scope facet already exists
-    const existingFacet = state.hasFacet(scopeFacetId);
+    const existingFacet = state.facets.has(scopeFacetId);
 
     if (existingFacet) {
-      // Update existing scope facet
-      return [{
+      this.addOperation({
         type: 'rewriteFacet',
         id: scopeFacetId,
-        changes: {
-          state: { active }
-        }
-      }];
+        changes: { state: { active } }
+      });
     } else {
-      // Create new scope facet
-      return [{
+      this.addOperation({
         type: 'addFacet',
         facet: {
           id: scopeFacetId,
@@ -164,7 +179,7 @@ export class PanelScopeReceptor extends BaseReceptor {
           scope: [scope],
           state: { active }
         } as any
-      }];
+      });
     }
   }
 }

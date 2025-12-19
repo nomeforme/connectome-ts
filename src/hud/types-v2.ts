@@ -98,6 +98,23 @@ export interface HUDConfig {
       prefix?: string;
       suffix?: string;
     };
+    /**
+     * Thinking mode configuration - enables chain-of-thought reasoning via prefill
+     * 
+     * NOTE: This is NOT Anthropic's official Extended Thinking API (which uses budget_tokens
+     * and is incompatible with prefill). This is "simulated thinking" - prefilling an opening
+     * thinking tag to encourage the model to produce visible reasoning before responding.
+     * 
+     * When enabled, the prefill becomes: <thinking>\n
+     * And the model produces: <thinking>reasoning...</thinking><my_turn>response</my_turn>
+     */
+    thinking?: {
+      enabled: boolean;
+      /** Opening tag for thinking block (default: "<thinking>\n") */
+      openTag?: string;
+      /** Closing tag for thinking block (default: "\n</thinking>\n") */
+      closeTag?: string;
+    };
   };
 }
 

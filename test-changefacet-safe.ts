@@ -4,24 +4,27 @@
 
 import { Space } from './src/spaces/space';
 import { VEILStateManager } from './src/veil/veil-state';
-import { BaseTransform } from './src/components/base-martem';
+import { Component } from './src/spaces/component';
+import { ExecutionContext } from './src/spaces/types';
 import { ReadonlyVEILState, VEILDelta, SpaceEvent, Facet } from './src/spaces/receptor-effector-types';
 
 // SAFE Transform: Only changes facet when specific condition is met
-class SafeHealthTransform extends BaseTransform {
-  process(state: ReadonlyVEILState): VEILDelta[] {
-    const deltas: VEILDelta[] = [];
-    
+class SafeHealthTransform extends Component {
+  priority = 200;
+
+  execute(context: ExecutionContext): void {
+    const { state } = context;
+
     const health = state.facets.get('health');
-    if (!health || health.type !== 'state') return deltas;
-    
+    if (!health || health.type !== 'state') return;
+
     const currentHealth = (health as any).state?.current;
     const status = (health as any).state?.status;
-    
+
     // Only update if health is low AND status hasn't been updated yet
     if (currentHealth < 30 && status === 'healthy') {
       console.log('[SafeTransform] Health is low, updating status to "critical"');
-      deltas.push({
+      this.addOperation({
         type: 'rewriteFacet',
         id: 'health',
         changes: {
@@ -29,25 +32,25 @@ class SafeHealthTransform extends BaseTransform {
         }
       });
     }
-    
-    return deltas;
   }
 }
 
 // CONDITIONALLY SAFE Transform: Only increments until a limit
-class ConditionalTimerTransform extends BaseTransform {
-  process(state: ReadonlyVEILState): VEILDelta[] {
-    const deltas: VEILDelta[] = [];
-    
+class ConditionalTimerTransform extends Component {
+  priority = 200;
+
+  execute(context: ExecutionContext): void {
+    const { state } = context;
+
     const timer = state.facets.get('timer-safe');
-    if (!timer || timer.type !== 'state') return deltas;
-    
+    if (!timer || timer.type !== 'state') return;
+
     const elapsed = (timer as any).state?.elapsed || 0;
-    
+
     // SAFE: Only increment up to a limit
     if (elapsed < 5) {
       console.log(`[ConditionalTransform] Incrementing timer from ${elapsed} to ${elapsed + 1}`);
-      deltas.push({
+      this.addOperation({
         type: 'rewriteFacet',
         id: 'timer-safe',
         changes: {
@@ -55,8 +58,6 @@ class ConditionalTimerTransform extends BaseTransform {
         }
       });
     }
-    
-    return deltas;
   }
 }
 

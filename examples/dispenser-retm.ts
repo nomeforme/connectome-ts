@@ -1,18 +1,18 @@
 #!/usr/bin/env tsx
 /**
- * Box Dispenser - Pure RETM Architecture
- * 
+ * Box Dispenser - FLEX Architecture
+ *
  * Demonstrates:
  * - Dynamic element creation via VEIL (boxes created on demand)
  * - Component-state management (no @persistent)
- * - Action handling in pure RETM
+ * - Action handling in FLEX
  * - Effectors creating elements through events
  * - Full Host integration
- * 
+ *
  * Architecture:
- * - DispenseButtonReceptor: button:press event → button-press facet
- * - DispenseEffector: Watches button-press, creates box via element:create
- * - BoxOpenReceptor: box:open event → activation facet
+ * - DispenseButtonReceptor: button:press event → button-press facet (priority 100)
+ * - DispenseEffector: Watches button-press, creates box (priority 300)
+ * - BoxOpenReceptor: box:open event → activation facet (priority 100)
  * - All state in VEIL component-state facets
  */
 
@@ -37,26 +37,31 @@ import {
   ElementTreeMaintainer,
   createConsoleElement
 } from '../src';
-import { BaseReceptor, BaseEffector, BaseTransform } from '../src/components/base-martem';
-import { SpaceEvent, ReadonlyVEILState, FacetDelta, EffectorResult } from '../src/spaces/receptor-effector-types';
+import { Component } from '../src/spaces/component';
+import { ExecutionContext, SpaceEvent } from '../src/spaces/types';
+import { ReadonlyVEILState, FacetDelta, FacetFilter } from '../src/spaces/receptor-effector-types';
 import { VEILDelta, Facet } from '../src/veil/types';
 import { ConnectomeApplication } from '../src/host/types';
 import { AfferentContext } from '../src/spaces/receptor-effector-types';
 
 // ============================================
-// RECEPTORS
+// RECEPTORS (FLEX Components, priority 100)
 // ============================================
 
 /**
  * Converts button press events to facets
  */
-class DispenseButtonReceptor extends BaseReceptor {
+class DispenseButtonReceptor extends Component {
+  priority = 100;
   topics = ['button:press'];
-  
-  transform(event: SpaceEvent, state: ReadonlyVEILState): VEILDelta[] {
+
+  execute(context: ExecutionContext): void {
+    const { event } = context;
+    if (!event || event.topic !== 'button:press') return;
+
     console.log('[DispenseButton] Button pressed!');
-    
-    return [{
+
+    this.addOperation({
       type: 'addFacet',
       facet: {
         id: `button-press-${Date.now()}`,
@@ -67,24 +72,26 @@ class DispenseButtonReceptor extends BaseReceptor {
           eventType: 'button-press'
         }
       }
-    }];
+    });
   }
 }
 
 /**
  * Converts box open events to facets + activation
  */
-class BoxOpenReceptor extends BaseReceptor {
+class BoxOpenReceptor extends Component {
+  priority = 100;
   topics = ['box:open'];
-  
-  transform(event: SpaceEvent, state: ReadonlyVEILState): VEILDelta[] {
+
+  execute(context: ExecutionContext): void {
+    const { event } = context;
+    if (!event || event.topic !== 'box:open') return;
+
     const { boxId, method } = event.payload as any;
     console.log(`[BoxOpenReceptor] Processing box:open for box ${boxId}, method: ${method}`);
-    
-    const deltas: VEILDelta[] = [];
-    
+
     // Create open event facet
-    deltas.push({
+    this.addOperation({
       type: 'addFacet',
       facet: {
         id: `box-${boxId}-opened-${Date.now()}`,
@@ -97,9 +104,9 @@ class BoxOpenReceptor extends BaseReceptor {
         attributes: { boxId, method }
       }
     });
-    
+
     // Create activation for agent to react
-    deltas.push({
+    this.addOperation({
       type: 'addFacet',
       facet: {
         id: `activation-box-open-${Date.now()}`,
@@ -114,26 +121,28 @@ class BoxOpenReceptor extends BaseReceptor {
         ephemeral: true
       }
     });
-    
-    return deltas;
   }
 }
 
 /**
  * Parses console commands for dispenser actions
  */
-class DispenserCommandReceptor extends BaseReceptor {
+class DispenserCommandReceptor extends Component {
+  priority = 100;
   topics = ['console:message'];
-  
-  transform(event: SpaceEvent, state: ReadonlyVEILState): VEILDelta[] {
+
+  execute(context: ExecutionContext): void {
+    const { event } = context;
+    if (!event || event.topic !== 'console:message') return;
+
     const payload = event.payload as any;
     const content = payload.content?.toLowerCase() || '';
-    
+
     // Don't override the default console message handling, just add command interpretation
     // Only process if it matches our commands
     if (content.includes('press') && content.includes('button')) {
       console.log('[DispenserCommand] Detected button press command');
-      return [{
+      this.addOperation({
         type: 'addFacet',
         facet: {
           id: `command-press-${Date.now()}`,
@@ -144,14 +153,15 @@ class DispenserCommandReceptor extends BaseReceptor {
             eventType: 'command-button-press'
           }
         }
-      }];
+      });
+      return;
     }
-    
+
     const openMatch = content.match(/open\s+box[-\s]*(\d+)/i);
     if (openMatch) {
       const boxNum = openMatch[1];
       console.log(`[DispenserCommand] Detected open box-${boxNum} command`);
-      return [{
+      this.addOperation({
         type: 'addFacet',
         facet: {
           id: `command-open-${Date.now()}`,
@@ -163,53 +173,72 @@ class DispenserCommandReceptor extends BaseReceptor {
           },
           attributes: { boxId: boxNum }
         }
-      }];
+      });
     }
-    
-    return [];
   }
 }
 
 /**
- * Executes dispenser commands
+ * Executes dispenser commands (FLEX Effector, priority 300)
  */
-class DispenserCommandEffector extends BaseEffector {
-  facetFilters = [{ type: 'event' }];
-  
-  async process(changes: FacetDelta[], state: ReadonlyVEILState): Promise<EffectorResult> {
-    const events: SpaceEvent[] = [];
-    
+class DispenserCommandEffector extends Component {
+  priority = 300;
+  facetFilters: FacetFilter[] = [{ type: 'event' }];
+
+  execute(context: ExecutionContext): void {
+    const { frame, state } = context;
+    if (!frame) return;
+
+    // Build changes from frame deltas
+    const changes = this.buildChangesFromDeltas(frame.deltas, state);
+
     for (const change of changes) {
       if (change.type !== 'added') continue;
-      
+
       const eventType = (change.facet as any).state?.eventType;
-      
+
       if (eventType === 'command-button-press') {
         // Emit button press event
-        events.push({
+        this.addEvent({
           topic: 'button:press',
-          source: { elementId: 'dispenser', elementPath: [] },
+          source: { elementId: 'dispenser', elementPath: [], elementType: 'Element' },
           timestamp: Date.now(),
           payload: {}
         });
       }
-      
+
       if (eventType === 'command-box-open') {
         const boxId = (change.facet as any).attributes?.boxId;
         console.log(`[DispenserCommandEffector] Emitting box:open for box ${boxId}`);
         if (boxId) {
           // Emit box open event
-          events.push({
+          this.addEvent({
             topic: 'box:open',
-            source: { elementId: `box-${boxId}`, elementPath: [] },
+            source: { elementId: `box-${boxId}`, elementPath: [], elementType: 'Element' },
             timestamp: Date.now(),
             payload: { boxId, method: 'carefully' }
           });
         }
       }
     }
-    
-    return { events };
+  }
+
+  private buildChangesFromDeltas(deltas: VEILDelta[], state: ReadonlyVEILState): FacetDelta[] {
+    const changes: FacetDelta[] = [];
+    for (const delta of deltas) {
+      if (delta.type === 'addFacet' && this.matchesFacetFilters(delta.facet)) {
+        changes.push({ type: 'added', facet: delta.facet });
+      }
+    }
+    return changes;
+  }
+
+  private matchesFacetFilters(facet: Facet): boolean {
+    if (!this.facetFilters || this.facetFilters.length === 0) return true;
+    return this.facetFilters.some(filter => {
+      if (filter.type && facet.type !== filter.type) return false;
+      return true;
+    });
   }
 }
 
@@ -218,56 +247,56 @@ class DispenserCommandEffector extends BaseEffector {
 // ============================================
 
 /**
- * Applies StateChangeFacets to actual state facets
- * This is the proper RETM pattern: Effectors emit state-change facets,
+ * Applies StateChangeFacets to actual state facets (FLEX Transform, priority 200)
+ * This is the proper FLEX pattern: Effectors emit state-change facets,
  * Transforms apply them to actual state
  */
-class BoxStateTransform extends BaseTransform {
-  process(state: ReadonlyVEILState): VEILDelta[] {
-    const deltas: VEILDelta[] = [];
-    
+class BoxStateTransform extends Component {
+  priority = 200;
+
+  execute(context: ExecutionContext): void {
+    const { state } = context;
+
     for (const [id, facet] of state.facets) {
       if (facet.type === 'state-change' && (facet as any).targetFacetIds) {
         const stateChange = facet as any;
         console.log(`[BoxStateTransform] Processing state-change for targets:`, stateChange.targetFacetIds);
-        
+
         // Apply changes to each target facet
         for (const targetId of stateChange.targetFacetIds) {
           const targetFacet = state.facets.get(targetId);
           if (!targetFacet) continue;
-          
+
           // Build the changes to apply
           const changes: any = {};
-          
+
           if (stateChange.state?.changes?.content?.new) {
             changes.content = stateChange.state.changes.content.new;
           }
-          
+
           if (stateChange.state?.changes?.isOpen?.new !== undefined) {
             changes.state = {
               ...(targetFacet as any).state,
               isOpen: stateChange.state.changes.isOpen.new
             };
           }
-          
+
           if (Object.keys(changes).length > 0) {
-            deltas.push({
+            this.addOperation({
               type: 'rewriteFacet',  // Exotemporal: applying the state change
               id: targetId,
               changes
             });
           }
         }
-        
+
         // Remove the state-change facet after processing (it's ephemeral)
-        deltas.push({
+        this.addOperation({
           type: 'removeFacet',
           id
         });
       }
     }
-    
-    return deltas;
   }
 }
 
@@ -276,35 +305,40 @@ class BoxStateTransform extends BaseTransform {
 // ============================================
 
 /**
- * Dispenses boxes when button is pressed
+ * Dispenses boxes when button is pressed (FLEX Effector, priority 300)
  */
-class DispenseEffector extends BaseEffector {
-  facetFilters = [{ type: 'event' }];
-  
-  async process(changes: FacetDelta[], state: ReadonlyVEILState): Promise<EffectorResult> {
-    const events: SpaceEvent[] = [];
-    
+class DispenseEffector extends Component {
+  priority = 300;
+  facetFilters: FacetFilter[] = [{ type: 'event' }];
+
+  execute(context: ExecutionContext): void {
+    const { frame, state } = context;
+    if (!frame) return;
+
+    // Build changes from frame deltas
+    const changes = this.buildChangesFromDeltas(frame.deltas, state);
+
     for (const change of changes) {
       if (change.type !== 'added') continue;
-      
+
       const eventType = (change.facet as any).state?.eventType;
       if (eventType !== 'button-press') continue;
-      
-      // Get dispenser state
+
+      // Get dispenser state from VEIL
       const dispenserState = this.getComponentState<{ boxCount: number; size: string; color: string }>();
       const boxCount = (dispenserState.boxCount || 0) + 1;
       const size = dispenserState.size || 'medium';
       const color = dispenserState.color || 'blue';
-      
+
       console.log(`[DispenseEffector] Dispensing box #${boxCount} (${size}, ${color})`);
-      
+
       // Update dispenser state
       this.updateComponentState({ boxCount, lastDispensed: Date.now() });
-      
+
       // Create box element via VEIL with continuation tag
-      events.push({
+      this.addEvent({
         topic: 'element:create',
-        source: { elementId: this.element.id, elementPath: [] },
+        source: { elementId: this.element?.id || 'dispenser', elementPath: [], elementType: 'Element' },
         timestamp: Date.now(),
         payload: {
           parentId: 'root',  // Add to space root
@@ -339,22 +373,40 @@ class DispenseEffector extends BaseEffector {
           }]
         }
       });
-      
+
       // Agent activation will happen via continuation after box is created
       // No need to activate directly here
     }
-    
-    return { events };
+  }
+
+  private buildChangesFromDeltas(deltas: VEILDelta[], state: ReadonlyVEILState): FacetDelta[] {
+    const changes: FacetDelta[] = [];
+    for (const delta of deltas) {
+      if (delta.type === 'addFacet' && this.matchesFacetFilters(delta.facet)) {
+        changes.push({ type: 'added', facet: delta.facet });
+      }
+    }
+    return changes;
+  }
+
+  private matchesFacetFilters(facet: Facet): boolean {
+    if (!this.facetFilters || this.facetFilters.length === 0) return true;
+    return this.facetFilters.some(filter => {
+      if (filter.type && facet.type !== filter.type) return false;
+      return true;
+    });
   }
 }
 
 /**
- * Handles box component behavior
+ * Handles box component behavior (FLEX Effector, priority 300)
  * This is actually more like a traditional component since boxes are interactive elements
  */
-class BoxComponent extends BaseEffector {
-  facetFilters = [{ type: 'event' }];
-  
+class BoxComponent extends Component {
+  priority = 300;
+  facetFilters: FacetFilter[] = [{ type: 'event' }];
+  private initialized = false;
+
   // Declare actions for registration
   static actions = {
     open: {
@@ -364,13 +416,13 @@ class BoxComponent extends BaseEffector {
       }
     }
   };
-  
+
   async onMount(): Promise<void> {
     // Register action handler
     (this as any).actions = new Map();
     (this as any).actions.set('open', this.open.bind(this));
-    
-    // Initialize box state (RETM components initialize in onMount via events, not onFirstFrame)
+
+    // Initialize box state (FLEX components initialize in onMount via events)
     const config = this.getComponentState<{
       boxId: number;
       size: string;
@@ -378,70 +430,111 @@ class BoxComponent extends BaseEffector {
       contents: string;
       isOpen: boolean;
     }>();
-    
+
     console.log(`[Box ${config.boxId}] Initialized: ${config.size} ${config.color} box`);
-    
-    // Create initial box state facet (using helper!)
-    this.emitFacet({
-      id: `${this.element.id}-state`,
-      type: 'state',
-      content: `A ${config.size} ${config.color} box sits here, closed and mysterious.`,
-      entityType: 'element',
-      entityId: this.element.id,
-      state: config
+
+    // Create initial box state facet
+    this.addOperation({
+      type: 'addFacet',
+      facet: {
+        id: `${this.element?.id}-state`,
+        type: 'state',
+        content: `A ${config.size} ${config.color} box sits here, closed and mysterious.`,
+        entityType: 'element',
+        entityId: this.element?.id,
+        state: config
+      }
     });
-    
-    // Add action hint (using helper!)
-    this.emitFacet({
-      id: `${this.element.id}-hint`,
-      type: 'ambient',
-      content: `You can open this box with @${this.element.id}.open()`
+
+    // Add action hint
+    this.addOperation({
+      type: 'addFacet',
+      facet: {
+        id: `${this.element?.id}-hint`,
+        type: 'ambient',
+        content: `You can open this box with @${this.element?.id}.open()`
+      }
     });
+
+    this.initialized = true;
   }
-  
-  async process(changes: FacetDelta[], state: ReadonlyVEILState): Promise<EffectorResult> {
+
+  execute(context: ExecutionContext): void {
+    if (!this.initialized) return;
+
+    const { frame, state } = context;
+    if (!frame) return;
+
+    // Build changes from frame deltas
+    const changes = this.buildChangesFromDeltas(frame.deltas, state);
+
     // Boxes process open events to update their own state
-    const events: SpaceEvent[] = [];
-    
     for (const change of changes) {
       if (change.type !== 'added') continue;
-      
+
       const eventType = (change.facet as any).state?.eventType;
       const boxId = (change.facet as any).attributes?.boxId;
       const myBoxId = this.getComponentState().boxId;
-      
+
       if (eventType === 'box-opened' && boxId == myBoxId) {
         // Update our component-state to mark as open (scoped write, immediate)
         const config = this.getComponentState();
         this.updateComponentState({ isOpen: true });
-        
+
         // Emit StateChangeFacet for the endotemporal evolution
         // This records that the state changed at this moment in time
         const openEffect = this.getOpeningEffect(config.color);
-        this.emitFacet({
-          id: `${this.element.id}-state-change-${Date.now()}`,
-          type: 'state-change',
-          targetFacetIds: [`${this.element.id}-state`],
-          state: {
-            changes: {
-              isOpen: { old: false, new: true },
-              content: { 
-                old: `A ${config.size} ${config.color} box sits here, closed and mysterious.`,
-                new: `The ${config.size} ${config.color} box is open, revealing ${config.contents}!`
+        this.addOperation({
+          type: 'addFacet',
+          facet: {
+            id: `${this.element?.id}-state-change-${Date.now()}`,
+            type: 'state-change',
+            targetFacetIds: [`${this.element?.id}-state`],
+            state: {
+              changes: {
+                isOpen: { old: false, new: true },
+                content: {
+                  old: `A ${config.size} ${config.color} box sits here, closed and mysterious.`,
+                  new: `The ${config.size} ${config.color} box is open, revealing ${config.contents}!`
+                }
               }
-            }
-          },
-          ephemeral: true
+            },
+            ephemeral: true
+          }
         });
-        
-        // Emit event for the opening effect (using helper!)
-        this.emitEventFacet(`The box opens with a ${openEffect}!`);
+
+        // Emit event for the opening effect
+        this.addOperation({
+          type: 'addFacet',
+          facet: {
+            id: `box-open-effect-${Date.now()}`,
+            type: 'event',
+            content: `The box opens with a ${openEffect}!`,
+            ephemeral: true
+          }
+        });
       }
     }
-    
-    return { events };
   }
-  
+
+  private buildChangesFromDeltas(deltas: VEILDelta[], state: ReadonlyVEILState): FacetDelta[] {
+    const changes: FacetDelta[] = [];
+    for (const delta of deltas) {
+      if (delta.type === 'addFacet' && this.matchesFacetFilters(delta.facet)) {
+        changes.push({ type: 'added', facet: delta.facet });
+      }
+    }
+    return changes;
+  }
+
+  private matchesFacetFilters(facet: Facet): boolean {
+    if (!this.facetFilters || this.facetFilters.length === 0) return true;
+    return this.facetFilters.some(filter => {
+      if (filter.type && facet.type !== filter.type) return false;
+      return true;
+    });
+  }
+
   private getOpeningEffect(color: string): string {
     switch (color) {
       case 'red': return 'burst of flame';
@@ -451,20 +544,30 @@ class BoxComponent extends BaseEffector {
       default: return 'puff of smoke';
     }
   }
-  
+
   // Action handler
   async open(params?: { method?: string }): Promise<void> {
     const method = params?.method || 'normally';
     const config = this.getComponentState();
-    
+
     if (config.isOpen) {
-      this.addEvent('The box is already open!', 'box-already-open');
+      this.addOperation({
+        type: 'addFacet',
+        facet: {
+          id: `box-already-open-${Date.now()}`,
+          type: 'event',
+          content: 'The box is already open!',
+          ephemeral: true
+        }
+      });
       return;
     }
-    
+
     // Emit box open event
-    this.emit({
+    this.addEvent({
       topic: 'box:open',
+      source: { elementId: this.element?.id || 'box', elementPath: [], elementType: 'Element' },
+      timestamp: Date.now(),
       payload: {
         boxId: config.boxId,
         method,
@@ -486,7 +589,7 @@ class DispenserApplication implements ConnectomeApplication {
   }
   
   async initialize(space: Space, veilState: VEILStateManager): Promise<void> {
-    console.log('🎮 Initializing Box Dispenser (RETM)...\n');
+    console.log('🎮 Initializing Box Dispenser (FLEX)...\n');
     
     // Register components
     ComponentRegistry.register('ConsoleAfferent', ConsoleAfferent);
@@ -629,7 +732,7 @@ Be playful and creative in your responses.`
 }
 
 async function main() {
-  console.log('🎁 Box Dispenser - Pure RETM Architecture');
+  console.log('🎁 Box Dispenser - Pure FLEX Architecture');
   console.log('=========================================\n');
   
   const mockProvider = new MockLLMProvider();

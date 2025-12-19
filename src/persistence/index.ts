@@ -15,7 +15,7 @@ export * from './transition-maintainer';
 // Re-export commonly used items
 export { persistent, persistable, Serializers } from './decorators';
 export { PersistenceMaintainer } from './persistence-maintainer';
-export { ComponentRegistry } from './serialization';
+export { ComponentRegistry } from './component-registry';
 export { restoreFromSnapshot } from './restoration';
 export { TransitionManager } from './transition-manager';
 export { TransitionMaintainer } from './transition-maintainer';

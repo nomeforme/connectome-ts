@@ -1,18 +1,20 @@
 /**
- * Serialization system for components and elements
+ * Serialization system for components and space
  */
 
 import { Component } from '../spaces/component';
-import { Element } from '../spaces/element';
+import { Space } from '../spaces/space';
 import { VEILState, Facet, StateFacet, hasStateAspect, hasAgentGeneratedAspect, hasStreamAspect, hasContentAspect } from '../veil/types';
+import { ComponentStateFacet } from '../veil/facet-types';
 import { 
   SerializableValue, 
   SerializedComponent, 
-  SerializedElement,
+  SerializedSpace, 
   SerializedVEILState,
   ComponentPersistenceMetadata
 } from './types';
 import { getPersistenceMetadata } from './decorators';
+import { ComponentRegistry } from './component-registry';
 
 /**
  * Serialize a component instance
@@ -186,17 +188,17 @@ export function deserializeValue(value: SerializableValue): any {
 }
 
 /**
- * Serialize an element and its tree
+ * Serialize the Space and its flat component list
  */
-export function serializeElement(element: Element): SerializedElement {
+export function serializeSpace(space: Space): SerializedSpace {
   const components: SerializedComponent[] = [];
   
   // Serialize components
-  for (const component of element.components) {
+  for (const component of space.components) {
     // Skip components that are managed by another component (e.g., dynamically loaded)
     // Check if this component is the loadedComponent of an AxonLoader
     let isDynamicallyManaged = false;
-    for (const other of element.components) {
+    for (const other of space.components) {
       if (other.constructor.name === 'AxonLoaderComponent' && (other as any).loadedComponent === component) {
         isDynamicallyManaged = true;
         break;
@@ -206,22 +208,18 @@ export function serializeElement(element: Element): SerializedElement {
     if (!isDynamicallyManaged) {
       const serialized = serializeComponent(component);
       if (serialized) {
+        // Add component ID to serialized data
+        (serialized as any).id = component.id;
         components.push(serialized);
       }
     }
   }
   
-  // Serialize children recursively
-  const children = element.children.map(child => serializeElement(child));
-  
   return {
-    id: element.id,
-    name: element.name,
-    type: element.constructor.name,
-    active: element.active,
-    subscriptions: [...element.subscriptions],
-    components,
-    children
+    id: space.id,
+    name: space.name,
+    type: 'Space',
+    components
   };
 }
 
@@ -320,6 +318,13 @@ function serializeFacet(facet: Facet): any {
       serialized.scopes = stateFacet.scopes;
       break;
     }
+    case 'component-state': {
+      const componentStateFacet = facet as ComponentStateFacet;
+      serialized.componentType = componentStateFacet.componentType;
+      serialized.componentId = componentStateFacet.componentId;
+      serialized.parentId = componentStateFacet.parentId;
+      break;
+    }
   }
 
   if (hasStateAspect(facet)) {
@@ -349,61 +354,4 @@ function serializeFacet(facet: Facet): any {
   }
   
   return serialized;
-}
-
-/**
- * Component registry for deserialization
- */
-export class ComponentRegistry {
-  private static constructors = new Map<string, new (...args: any[]) => Component>();
-  
-  /**
-   * Register a component constructor
-   */
-  static register(className: string, constructor: new (...args: any[]) => Component) {
-    this.constructors.set(className, constructor);
-  }
-  
-  /**
-   * Get a component constructor
-   */
-  static getConstructor(className: string): (new (...args: any[]) => Component) | undefined {
-    return this.constructors.get(className);
-  }
-  
-  /**
-   * Create a component instance from serialized data
-   */
-  static createInstance(data: SerializedComponent): Component | null {
-    const Constructor = this.getConstructor(data.className);
-    if (!Constructor) {
-      console.warn(`No constructor registered for component class: ${data.className}`);
-      return null;
-    }
-    
-    try {
-      // Create instance with no-args constructor
-      const instance = new Constructor();
-      
-      // Restore persistent properties
-      const metadata = getPersistenceMetadata(instance);
-      if (metadata) {
-        for (const [key, propMetadata] of metadata.properties) {
-          if (key in data.properties) {
-            const value = data.properties[key];
-            if (propMetadata.serializer) {
-              (instance as any)[key] = propMetadata.serializer.deserialize(value);
-            } else {
-              (instance as any)[key] = deserializeValue(value);
-            }
-          }
-        }
-      }
-      
-      return instance;
-    } catch (error) {
-      console.error(`Failed to create component instance for ${data.className}:`, error);
-      return null;
-    }
-  }
 }

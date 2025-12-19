@@ -1,42 +1,50 @@
 /**
  * StateTransitionTransform - Automatically generates event facets for state changes
- * 
- * This transform runs in Phase 2 and detects state changes, using renderers
- * attached to state facets to create human-readable event descriptions.
+ *
+ * FLEX Component (constraint: priority 200 - Transform level) that runs during execution and
+ * detects state changes, using renderers attached to state facets to create
+ * human-readable event descriptions.
  */
 
-import { BaseTransform } from '../components/base-martem';
-import { Transform, ReadonlyVEILState } from '../spaces/receptor-effector-types';
+import { Component } from '../spaces/component';
+import { ExecutionContext } from '../spaces/types';
+import { ReadonlyVEILState } from '../spaces/receptor-effector-types';
 import { Facet, hasStateAspect, StateFacet, VEILDelta } from '../veil/types';
 import { createEventFacet } from '../helpers/factories';
+import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
 
-export class StateTransitionTransform extends BaseTransform {
+export class StateTransitionTransform extends Component {
+  constraints = [priorityConstraint(ComponentPriority.TRANSFORM)];
+
   private previousStates = new Map<string, any>();
-  
-  process(state: ReadonlyVEILState): VEILDelta[] {
-    const deltas: VEILDelta[] = [];
-    
+
+  execute(context: ExecutionContext): void {
+    const { state } = context;
+    this.processStateTransitions(state);
+  }
+
+  private processStateTransitions(state: ReadonlyVEILState): void {
     // Check all state facets for changes
     for (const [id, facet] of state.facets) {
       if (facet.type !== 'state' || !hasStateAspect(facet)) continue;
-      
+
       const stateFacet = facet as StateFacet;
       const currentState = stateFacet.state;
       const previousState = this.previousStates.get(id);
-      
+
       // Clone current state for next frame
       this.previousStates.set(id, JSON.parse(JSON.stringify(currentState)));
-      
+
       // Skip if no previous state (first time seeing this facet)
       if (!previousState) continue;
-      
+
       // Find what changed
       const changes = this.detectChanges(previousState, currentState);
       if (changes.length === 0) continue;
-      
+
       // Skip if no renderers defined
       if (!stateFacet.transitionRenderers && !stateFacet.attributeRenderers) continue;
-      
+
       // Generate transition events
       for (const change of changes) {
         const narrative = this.renderTransition(
@@ -45,9 +53,9 @@ export class StateTransitionTransform extends BaseTransform {
           change.newValue,
           stateFacet
         );
-        
+
         if (narrative) {
-          deltas.push({
+          this.addOperation({
             type: 'addFacet',
             facet: createEventFacet({
               content: narrative,
@@ -69,8 +77,6 @@ export class StateTransitionTransform extends BaseTransform {
         }
       }
     }
-    
-    return deltas;
   }
   
   private detectChanges(oldState: any, newState: any): Array<{key: string, oldValue: any, newValue: any}> {

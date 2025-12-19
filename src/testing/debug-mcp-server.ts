@@ -219,8 +219,8 @@ export class ConnectomeDebugMCP {
    * Get a specific element by ID
    * @tool
    */
-  async getElement(params: { elementId: string }): Promise<any> {
-    return this.fetchJSON(`/api/elements/${params.elementId}`);
+  async getElement(params: { componentId: string }): Promise<any> {
+    return this.fetchJSON(`/api/elements/${params.componentId}`);
   }
   
   /**
@@ -228,10 +228,10 @@ export class ConnectomeDebugMCP {
    * @tool
    */
   async updateElementProps(params: {
-    elementId: string;
+    componentId: string;
     props: Record<string, any>;
   }): Promise<{ success: boolean }> {
-    await this.fetchJSON(`/api/elements/${params.elementId}/props`, {
+    await this.fetchJSON(`/api/elements/${params.componentId}/props`, {
       method: 'PUT',
       body: JSON.stringify(params.props)
     });
@@ -281,25 +281,102 @@ export class ConnectomeDebugMCP {
   
   /**
    * Search frames for specific patterns
+   * Returns lightweight match objects with context snippets instead of full frames
+   * Use getFrame(frameId) to inspect matching frames in detail
    * @tool
    */
   async searchFrames(params: {
     pattern: string;
     type?: 'operation' | 'event' | 'error';
     limit?: number;
-  }): Promise<Frame[]> {
-    const allFrames = await this.getFrames({ limit: params.limit || 100 });
-    
-    return allFrames.frames.filter(frame => {
+    maxResults?: number;
+  }): Promise<{
+    matches: Array<{
+      frameId: string;
+      sequence: number;
+      timestamp: string;
+      type: string;
+      matchCount: number;
+      matchContext: string;
+    }>;
+    totalSearched: number;
+    totalMatched: number;
+    truncated: boolean;
+  }> {
+    const searchLimit = params.limit || 100;
+    const maxResults = params.maxResults || 20;
+    const contextChars = 100;
+
+    const allFrames = await this.getFrames({ limit: searchLimit });
+    const patternLower = params.pattern.toLowerCase();
+
+    const matches: Array<{
+      frameId: string;
+      sequence: number;
+      timestamp: string;
+      type: string;
+      matchCount: number;
+      matchContext: string;
+    }> = [];
+
+    for (const frame of allFrames.frames) {
       // Filter by type if specified
       if (params.type && frame.type !== params.type) {
-        return false;
+        continue;
       }
-      
+
       // Search in frame content
-      const frameStr = JSON.stringify(frame).toLowerCase();
-      return frameStr.includes(params.pattern.toLowerCase());
-    });
+      const frameStr = JSON.stringify(frame);
+      const frameStrLower = frameStr.toLowerCase();
+
+      // Find all matches and count them
+      let matchCount = 0;
+      let firstMatchIndex = -1;
+      let searchIndex = 0;
+
+      while (true) {
+        const idx = frameStrLower.indexOf(patternLower, searchIndex);
+        if (idx === -1) break;
+
+        if (firstMatchIndex === -1) {
+          firstMatchIndex = idx;
+        }
+        matchCount++;
+        searchIndex = idx + 1;
+      }
+
+      if (matchCount > 0) {
+        // Extract context around first match
+        const start = Math.max(0, firstMatchIndex - contextChars);
+        const end = Math.min(frameStr.length, firstMatchIndex + params.pattern.length + contextChars);
+        let matchContext = frameStr.substring(start, end);
+
+        // Add ellipsis if truncated
+        if (start > 0) matchContext = '...' + matchContext;
+        if (end < frameStr.length) matchContext = matchContext + '...';
+
+        matches.push({
+          frameId: frame.uuid,
+          sequence: frame.sequence,
+          timestamp: frame.timestamp,
+          type: frame.type,
+          matchCount,
+          matchContext
+        });
+
+        // Stop if we've reached maxResults
+        if (matches.length >= maxResults) {
+          break;
+        }
+      }
+    }
+
+    return {
+      matches,
+      totalSearched: allFrames.frames.length,
+      totalMatched: matches.length,
+      truncated: matches.length >= maxResults
+    };
   }
   
   /**
@@ -390,10 +467,10 @@ export class ConnectomeDebugMCP {
    * Get element tree starting from a specific element or root
    * @tool
    */
-  async getElementTree(params: { elementId?: string; depth?: number } = {}): Promise<any> {
+  async getElementTree(params: { componentId?: string; depth?: number } = {}): Promise<any> {
     const state = await this.getState();
     
-    if (!params.elementId) {
+    if (!params.componentId) {
       return state.space;
     }
     
@@ -411,7 +488,7 @@ export class ConnectomeDebugMCP {
       return null;
     };
     
-    return findElement(state.space, params.elementId);
+    return findElement(state.space, params.componentId);
   }
   
   /**
@@ -420,7 +497,7 @@ export class ConnectomeDebugMCP {
    */
   async getAgents(): Promise<any[]> {
     const state = await this.getState();
-    
+
     // Extract agents from VEIL state
     const agents: any[] = [];
     if (state.veil?.agents) {
@@ -428,10 +505,31 @@ export class ConnectomeDebugMCP {
         agents.push({ id, ...(agent as any) });
       }
     }
-    
+
     return agents;
   }
-  
+
+  /**
+   * Get component list with priorities and execution order
+   * @tool
+   */
+  async getComponents(): Promise<any[]> {
+    const state = await this.getState();
+
+    // Extract components from space
+    if (!state.space?.components || !Array.isArray(state.space.components)) {
+      return [];
+    }
+
+    return state.space.components.map((c: any, index: number) => ({
+      index,
+      id: c.id,
+      name: c.constructor?.name || c.name || 'Unknown',
+      priority: c.priority,
+      enabled: c.enabled
+    }));
+  }
+
   /**
    * Get debug LLM status and requests
    * @tool

@@ -1,5 +1,4 @@
-import { ComponentLifecycle, EventHandler, SpaceEvent, ElementRef } from './types';
-import type { Element } from './element';
+import { ComponentLifecycle, EventHandler, SpaceEvent, ComponentRef, ExecutionContext } from './types';
 import type { Space } from './space';
 import type { VEILDelta } from '../veil/types';
 import {
@@ -7,17 +6,23 @@ import {
   createStateFacet,
   createEventFacet
 } from '../helpers/factories';
+import { ComponentConstraintFacet, ConstraintFacet } from './constraints';
 
 /**
- * Base component class that can be attached to Elements
+ * Base component class
  * Similar to Unity's MonoBehaviour
  */
 export abstract class Component implements ComponentLifecycle, EventHandler {
   /**
-   * The element this component is attached to
+   * Direct reference to Space
    */
-  element!: Element;
-  
+  space!: Space;
+
+  /**
+   * Component ID
+   */
+  id!: string;
+
   /**
    * Whether this component is enabled
    */
@@ -27,9 +32,49 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
    * Track if we've seen the first frame
    */
   private _firstFrameSeen: boolean = false;
-  
+
+  /**
+   * Topic subscriptions
+   */
+  private _subscriptions: string[] = [];
+
+  /**
+   * Declared constraints for this component.
+   * Use priorityConstraint() from constraints.ts to set execution order.
+   *
+   * @example
+   * import { priorityConstraint, ComponentPriority } from './constraints';
+   *
+   * class MyReceptor extends Component {
+   *   constraints = [priorityConstraint(ComponentPriority.RECEPTOR)];
+   * }
+   */
+  constraints: ConstraintFacet[] = [];
+
+  /**
+   * Topic subscriptions for execute() filtering.
+   * 
+   * - '*' (default): Component receives all events
+   * - string[]: Component only receives events matching these topics
+   * 
+   * Supports wildcards: 'discord.*' matches 'discord.message', 'discord.joined', etc.
+   * 
+   * @example
+   * class MyReceptor extends Component {
+   *   topics = ['discord:*', 'panel:tools-registered'];
+   * }
+   */
+  topics: string[] | '*' = '*';
+
   get enabled(): boolean {
     return this._enabled;
+  }
+
+  /**
+   * Get all constraint facets for this component.
+   */
+  getConstraintFacets(): ComponentConstraintFacet[] {
+    return [...this.constraints];
   }
   
   set enabled(value: boolean) {
@@ -60,7 +105,7 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
   }
   
   /**
-   * Called when component is attached to an element and ready for operation
+   * Called when component is attached to space and ready for operation
    * Use for connecting to external services, starting operations
    */
   onMount(): void {
@@ -68,7 +113,7 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
   }
   
   /**
-   * Called when component is removed from an element
+   * Called when component is removed from space
    */
   onUnmount(): void {
     // Override in subclasses
@@ -109,17 +154,26 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
   onFirstFrame?(): void | Promise<void>;
   
   /**
+   * Process the current frame event
+   * Called sequentially for each component in the execution list
+   * 
+   * @param context The execution context containing event, state, and frame
+   */
+  execute(context: ExecutionContext): void {
+    // No-op by default
+  }
+
+  /**
    * Get a reference from the host registry with helpful errors
    */
   protected requireReference<T>(id: string): T {
-    const space = this.element?.findSpace() as Space | null;
-    if (!space) {
+    if (!this.space) {
       throw new Error(`Component ${this.constructor.name} not mounted - cannot access references`);
     }
     
-    const value = space.getReference(id);
+    const value = this.space.getReference(id);
     if (!value) {
-      const available = space.listReferences();
+      const available = this.space.listReferences();
       throw new Error(
         `Required reference '${id}' not found for ${this.constructor.name}.\n` +
         `Available references: ${available.join(', ')}\n` +
@@ -134,16 +188,16 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
    * Get an optional reference
    */
   protected getReference<T>(id: string): T | undefined {
-    const space = this.element?.findSpace() as Space | null;
-    return space?.getReference(id) as T | undefined;
+    return this.space?.getReference(id) as T | undefined;
   }
   
   /**
-   * Internal method to attach to an element
+   * Internal method to attach to Space
    * Returns a promise if the component has async initialization
    */
-  async _attach(element: Element, isRestoring: boolean = false): Promise<void> {
-    this.element = element;
+  async _attach(space: Space, id: string, isRestoring: boolean = false): Promise<void> {
+    this.space = space;
+    this.id = id;
     
     // Always call onInit first
     const initResult = this.onInit();
@@ -169,29 +223,8 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
     if (this._enabled) {
       this.onEnable();
     }
-    
-    // Auto-register RETM components with Space (eliminates dual registration)
-    const space = this.element.findSpace();
-    if (space && 'addReceptor' in space) {  // Ensure it's a Space, not just an Element
-      const { isReceptor, isEffector, isTransform, isMaintainer } = require('../utils/retm-type-guards');
-      
-      if (isReceptor(this)) {
-        console.log(`[Component._attach] Auto-registering receptor: ${this.constructor.name}`);
-        (space as any).addReceptor(this);
-      }
-      if (isEffector(this)) {
-        console.log(`[Component._attach] Auto-registering effector: ${this.constructor.name}`);
-        (space as any).addEffector(this);
-      }
-      if (isTransform(this)) {
-        console.log(`[Component._attach] Auto-registering transform: ${this.constructor.name}`);
-        (space as any).addTransform(this);
-      }
-      if (isMaintainer(this)) {
-        console.log(`[Component._attach] Auto-registering maintainer: ${this.constructor.name}`);
-        (space as any).addMaintainer(this);
-      }
-    }
+
+    // FLEX: Components set their own priority - no auto-registration needed
   }
   
   /**
@@ -205,7 +238,7 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
   }
   
   /**
-   * Internal method to detach from an element
+   * Internal method to detach
    */
   _detach(): void {
     if (this._enabled) {
@@ -217,42 +250,109 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
   // ========== Convenience Methods ==========
   
   /**
-   * Emit an event from the parent element
+   * Emit an event from the component (async - processed in next frame or buffered)
    */
   protected emit(event: Omit<SpaceEvent, 'source' | 'timestamp'> & { timestamp?: number }): void {
-    this.element.emit({
+    this.space.emit({
       ...event,
-      source: this.element.getRef(),
+      source: this.getRef(),
       timestamp: event.timestamp || Date.now()
     });
   }
   
   /**
-   * Subscribe the parent element to an event topic
+   * Emit a synchronous event that will be processed immediately in a sub-cycle.
+   * 
+   * Use this for:
+   * - Tool calls that need immediate results
+   * - Script execution with return values
+   * - Any "call and wait" pattern
+   * 
+   * WARNING: You are responsible for preventing infinite loops.
+   * If component A emits sync → B emits sync → A emits sync... = infinite loop.
+   * 
+   * @param event The event to emit synchronously
    */
-  protected subscribe(topic: string): void {
-    this.element.subscribe(topic);
+  protected emitSync(event: Omit<SpaceEvent, 'source' | 'timestamp' | 'sync'> & { timestamp?: number }): void {
+    this.space.emit({
+      ...event,
+      source: this.getRef(),
+      timestamp: event.timestamp || Date.now(),
+      sync: true
+    });
   }
   
   /**
-   * Find a child element by ID
+   * Subscribe to event topics
    */
-  protected findChild(id: string): Element | null {
-    return this.element.findChild(id);
+  protected subscribe(topicPattern: string): void {
+    this._subscriptions.push(topicPattern);
+  }
+
+  /**
+   * Check if this component is subscribed to a topic
+   * Checks both legacy _subscriptions AND the new topics property
+   */
+  isSubscribedTo(topic: string): boolean {
+    // Check legacy subscriptions first
+    const legacyMatch = this._subscriptions.some(pattern => {
+      if (pattern === '*') return true;
+      if (pattern === topic) return true;
+      if (pattern.endsWith('*')) {
+        const prefix = pattern.slice(0, -1);
+        return topic.startsWith(prefix);
+      }
+      return false;
+    });
+    
+    if (legacyMatch) return true;
+    
+    // Check new topics property
+    return this.matchesTopic(topic);
   }
   
   /**
-   * Get the parent element's ID
+   * Check if a topic matches this component's topics declaration
    */
-  protected get elementId(): string {
-    return this.element.id;
+  matchesTopic(topic: string): boolean {
+    if (this.topics === '*') return true;
+    
+    return this.topics.some(pattern => {
+      if (pattern === '*') return true;
+      if (pattern === topic) return true;
+      // Support wildcards: 'discord:*' matches 'discord:message'
+      if (pattern.endsWith('*')) {
+        const prefix = pattern.slice(0, -1);
+        return topic.startsWith(prefix);
+      }
+      // Support wildcards: 'discord.*' matches 'discord.message'
+      if (pattern.endsWith('.*')) {
+        const prefix = pattern.slice(0, -2) + '.';
+        return topic.startsWith(prefix);
+      }
+      return false;
+    });
   }
   
   /**
-   * Get a reference to the parent element
+   * Optional fine-grained event filter.
+   * Called after topic matching, before execute().
+   * Override to add custom filtering logic.
+   * 
+   * @param event The event to filter
+   * @returns true to process this event, false to skip
    */
-  protected getRef(): ElementRef {
-    return this.element.getRef();
+  eventFilter?(event: SpaceEvent): boolean;
+  
+  /**
+   * Get a reference to this component
+   */
+  public getRef(): ComponentRef {
+    return {
+      componentId: this.id,
+      componentPath: ['root', this.id],
+      componentType: this.constructor.name
+    };
   }
 
   // ============================================
@@ -263,10 +363,7 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
    * Get this component's unique ID for state scoping
    */
   protected getComponentId(): string {
-    // Use element ID + component type + index as unique ID
-    const components = Array.from(this.element.components);
-    const index = components.indexOf(this);
-    return `${this.element.id}:${this.constructor.name}:${index}`;
+    return this.id;
   }
 
   /**
@@ -274,13 +371,14 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
    * Returns empty object if state facet doesn't exist yet
    */
   protected getComponentState<T = Record<string, any>>(): T {
-    const space = this.element?.findSpace() as Space | undefined;
-    if (!space || !(space as any).getVEILState) {
+    if (!this.space || !(this.space as any).getVEILState) {
       return {} as T;
     }
     
-    const veilState = (space as any).getVEILState().getState();
+    const veilState = (this.space as any).getVEILState().getState();
     const componentId = this.getComponentId();
+    // Legacy format was "component-state:componentId:Type:Index"
+    // Now simplified to "component-state:componentId"
     const stateFacet = veilState.facets.get(`component-state:${componentId}`);
     
     return (stateFacet?.state || {}) as T;
@@ -288,34 +386,25 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
 
   /**
    * Update this component's state in VEIL
-   * 
-   * For VEILComponents (Phase 1/2): Uses addOperation() - applies via normal flow
-   * For Effectors/Maintainers (Phase 3/4): Directly modifies VEIL (side effect!) via Space hook
-   * For Afferents: Must emit event, use runtime cache
-   * 
+   *
+   * Uses addOperation() which applies deltas immediately during execution.
+   * Works for all component types (Receptors, Transforms, Effectors, Maintainers).
+   *
+   * Note: Afferents should emit events instead of directly modifying state.
+   *
    * @param updates - Partial state updates (deep merged)
    */
   protected updateComponentState(updates: Record<string, any>): void {
     const componentId = this.getComponentId();
     const currentState = this.getComponentState();
-    
-    const delta = {
-      type: 'rewriteFacet' as const,
+
+    this.addOperation({
+      type: 'rewriteFacet',
       id: `component-state:${componentId}`,
       changes: {
         state: { ...currentState, ...updates }
       }
-    };
-    
-    // Try to apply as scoped write (for Effectors/Maintainers in their phase)
-    const space = this.element?.findSpace() as any;
-    if (space && space._applyComponentStateDelta) {
-      // Direct application during Phase 3/4
-      space._applyComponentStateDelta(delta, componentId);
-    } else {
-      // Fallback to normal addOperation (for VEILComponents)
-      this.addOperation(delta);
-    }
+    });
   }
 
   /**
@@ -338,14 +427,19 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
    * This is the primary way components interact with VEIL state
    */
   protected addOperation(operation: VEILDelta): void {
-    const space = this.element?.findSpace() as Space | undefined;
-    if (!space) {
+    if (!this.space) {
       throw new Error(
-        `[${this.constructor.name}] Cannot add operation - element not attached to space`
+        `[${this.constructor.name}] Cannot add operation - component not attached to space`
       );
     }
     
-    const frame = (space as any).getCurrentFrame ? (space as any).getCurrentFrame() : undefined;
+    // Phase 3: Apply immediately via Space
+    if ('applyOperation' in this.space) {
+      (this.space as any).applyOperation(operation);
+      return;
+    }
+    
+    const frame = (this.space as any).getCurrentFrame ? (this.space as any).getCurrentFrame() : undefined;
     if (!frame) {
       throw new Error(
         `[${this.constructor.name}] VEIL operations are only allowed during frame processing. ` +
@@ -365,13 +459,6 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
    * @param content - The facet content
    * @param idOrAttributes - Either a string ID or attributes object
    * @param attributes - Attributes if second param was an ID
-   * 
-   * @example
-   * // Auto-generated ID
-   * this.addAmbient('System initialized', { timestamp: Date.now() });
-   * 
-   * // Stable ID
-   * this.addAmbient('System initialized', 'init-message', { timestamp: Date.now() });
    */
   protected addAmbient(
     content: string, 
@@ -386,11 +473,11 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
       attrs = attributes || {};
     } else {
       // Simple counter-based ID generation
-      id = `${this.element.id}-ambient-${Date.now()}`;
+      id = `${this.id}-ambient-${Date.now()}`;
       attrs = idOrAttributes || {};
     }
     
-    const { streamId = `${this.element.id}:ambient`, streamType, ...metadata } = attrs;
+    const { streamId = `${this.id}:ambient`, streamType, ...metadata } = attrs;
 
     this.addOperation({
       type: 'addFacet',
@@ -407,7 +494,7 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
         facet: createEventFacet({
           id: `${id}-meta`,
           content: `metadata:${JSON.stringify(metadata)}`,
-          source: this.element.id,
+          source: this.id,
           eventType: 'ambient-metadata',
           metadata,
           streamId,
@@ -419,22 +506,19 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
 
   /**
    * Adds a state facet
-   * @param id - The facet ID (will be prefixed with element ID)
+   * @param id - The facet ID (will be prefixed with component ID)
    * @param content - The facet content  
    * @param attributes - Optional attributes
-   * 
-   * @example
-   * this.addState('status', 'Ready', { connections: 5 });
    */
   protected addState(id: string, content: string, attributes: Record<string, any> = {}): void {
-    const facetId = `${this.element.id}-${id}`;
+    const facetId = `${this.id}-${id}`;
     this.addOperation({
       type: 'addFacet',
       facet: createStateFacet({
         id: facetId,
         content,
         entityType: 'component',
-        entityId: this.element.id,
+        entityId: this.id,
         state: attributes,
         scopes: []
       })
@@ -443,17 +527,14 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
 
   /**
    * Changes/updates an existing state facet
-   * @param id - The facet ID (without element prefix)
+   * @param id - The facet ID (without component prefix)
    * @param updates - Content and/or attributes to update
-   * 
-   * @example
-   * this.changeState('status', { content: 'Connected', attributes: { online: true } });
    */
   protected changeState(
     id: string, 
     changes: { content?: string; attributes?: Record<string, any> }
   ): void {
-    const facetId = `${this.element.id}-${id}`;
+    const facetId = `${this.id}-${id}`;
     const delta: any = {};
     if (changes.content !== undefined) {
       delta.content = changes.content;
@@ -485,13 +566,6 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
    * @param eventType - Optional event subtype
    * @param idOrAttributes - Either a string ID or attributes object
    * @param attributes - Attributes if third param was an ID
-   * 
-   * @example
-   * // Auto-generated ID
-   * this.addEvent('User logged in', 'auth', { userId: '123' });
-   * 
-   * // Stable ID
-   * this.addEvent('User logged in', 'auth', 'login-event', { userId: '123' });
    */
   protected addEvent(
     content: string, 
@@ -507,11 +581,11 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
       attrs = attributes || {};
     } else {
       // Simple timestamp-based ID
-      id = `${this.element.id}-event-${Date.now()}`;
+      id = `${this.id}-event-${Date.now()}`;
       attrs = idOrAttributes || {};
     }
     
-    const { source = this.element.id, streamId: streamIdAttr, streamType: streamTypeAttr, ...metadata } = attrs;
+    const { source = this.id, streamId: streamIdAttr, streamType: streamTypeAttr, ...metadata } = attrs;
     const streamId = typeof streamIdAttr === 'string' ? streamIdAttr : 'default';
     const streamType = typeof streamTypeAttr === 'string' ? streamTypeAttr : undefined;
 
@@ -529,49 +603,30 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
 
   /**
    * Checks if we're currently in a frame (safe to add operations)
-   * @returns true if in frame, false otherwise
-   * 
-   * @example
-   * if (this.inFrame()) {
-   *   this.addOperation(...);
-   * }
    */
   protected inFrame(): boolean {
-    const space = this.element.findSpace() as any;
-    return space?.isProcessingFrame || false;
+    return (this.space as any)?.isProcessingFrame || false;
   }
 
   /**
    * Requires that we're in a frame, throws descriptive error if not
-   * Use this when an operation MUST happen in a frame
-   * 
-   * @example
-   * this.requireFrame();
-   * this.element.addOperation(...); // Safe now
    */
   protected requireFrame(): void {
     if (!this.inFrame()) {
-      const space = this.element.findSpace();
       throw new Error(
         `[${this.constructor.name}] This operation requires an active frame. ` +
         `Make sure you're calling this during frame processing or from an event handler. ` +
-        `Current frame state: ${space ? 'Space exists but not in frame' : 'No space found'}. ` +
-        `If you need to defer operations, use element.space.requestFrame().`
+        `Current frame state: ${this.space ? 'Space exists but not in frame' : 'No space found'}. ` +
+        `If you need to defer operations, use this.space.requestFrame().`
       );
     }
   }
 
   /**
    * Helper to safely get current VEIL state
-   * @returns The current VEIL state or null if not available
-   * 
-   * @example
-   * const state = this.getVeilState();
-   * const myFacet = state?.facets.get('my-facet-id');
    */
   protected getVeilState() {
-    const space = this.element.findSpace() as any;
-    return space?.veilState?.getState() || null;
+    return (this.space as any)?.veilState?.getState() || null;
   }
 
   /**
@@ -579,22 +634,13 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
    * Useful for operations that need to happen outside of current frame
    * 
    * @param operation - Function to execute in next frame
-   * 
-   * @example
-   * this.deferToNextFrame(() => {
-   *   this.addAmbient('Deferred operation completed');
-   * });
    */
   protected deferToNextFrame(operation: () => void): void {
-    const space = this.element.findSpace() as any;
-    if (!space) {
+    if (!this.space) {
       throw new Error(`[${this.constructor.name}] Cannot defer operation - no space found`);
     }
     
-    space.once('frame:start', () => {
-      operation();
-    });
-    space.requestFrame();
+    this.space.runNextFrame(operation);
   }
 
   // ============================================
@@ -604,7 +650,6 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
   /**
    * Emit a facet via veil:operation event
    * For Effectors/Maintainers/Afferents that can't directly add to frame
-   * Can be overridden in subclasses for validation
    */
   protected emitFacet(facet: import('../veil/types').Facet): void {
     this.emit({
@@ -620,7 +665,6 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
 
   /**
    * Emit an agent activation (convenience)
-   * Can be overridden for validation
    */
   protected activateAgent(reason: string, options?: {
     priority?: 'low' | 'normal' | 'high' | 'critical';
@@ -629,7 +673,7 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
   }): void {
     const { createAgentActivation } = require('../helpers/factories');
     this.emitFacet(createAgentActivation(reason, {
-      source: options?.source || this.element.id,
+      source: options?.source || this.id,
       priority: options?.priority || 'normal',
       streamRef: options?.streamRef
     }));
@@ -637,7 +681,6 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
 
   /**
    * Emit an event facet (convenience)
-   * Can be overridden for validation
    */
   protected emitEventFacet(content: string, options?: {
     eventType?: string;
@@ -645,12 +688,15 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
   }): void {
     const { createEventFacet } = require('../helpers/factories');
     this.emitFacet(createEventFacet({
-      id: `${this.element.id}-event-${Date.now()}`,
+      id: `${this.id}-event-${Date.now()}`,
       content,
-      source: this.element.id,
+      source: this.id,
       eventType: options?.eventType || 'event',
       metadata: options?.metadata,
       streamId: 'default'
     }));
   }
 }
+
+// Note: VEILComponent has been consolidated - use Component directly or import from base-components.ts
+

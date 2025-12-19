@@ -155,9 +155,8 @@ export type ConfigFacet = BaseFacet & StateAspect & {
 export type ComponentStateFacet = BaseFacet & StateAspect & {
   type: 'component-state';
   componentType: string;  // e.g., 'discord-afferent', 'rate-limit-effector'
-  componentClass: 'modulator' | 'afferent' | 'receptor' | 'transform' | 'effector' | 'maintainer';
   componentId: string;    // Unique instance ID
-  elementId: string;      // Owning element
+  parentId?: string;      // Parent component/space ID
 };
 
 /**
@@ -260,8 +259,8 @@ export type ActionDefinitionFacet = BaseFacet & StateAspect<{
  * Element tree structure facet (infrastructure)
  */
 export type ElementTreeFacet = BaseFacet & StateAspect<{
-  elementId: string;
-  elementType: string;
+  componentId: string;
+  componentType: string;
   parentId: string | null;
   name: string;
   active: boolean;
@@ -279,7 +278,7 @@ export type ElementTreeFacet = BaseFacet & StateAspect<{
  */
 export type ElementRequestFacet = BaseFacet & StateAspect<{
   parentId: string | null;
-  elementType: string;
+  componentType: string;
   name: string;
   components?: Array<{
     type: string;
@@ -290,21 +289,21 @@ export type ElementRequestFacet = BaseFacet & StateAspect<{
 };
 
 /**
- * Component creation request facet for MARTEM architecture (ephemeral)
+ * Component creation request facet (ephemeral)
  */
 export type ComponentRequestFacet = BaseFacet & StateAspect<{
   /** Unique component type identifier (e.g., 'discord-afferent', 'rate-limit-modulator') */
   componentType: string;
-  
-  /** Component class for Space registration */
-  componentClass: 'modulator' | 'afferent' | 'receptor' | 'transform' | 'effector' | 'maintainer';
-  
+
   /** Parent element ID */
-  elementId: string;
-  
+  componentId: string;
+
+  /** Component priority for FLEX ordering */
+  priority?: number;
+
   /** Component-specific configuration */
   config?: any;
-  
+
   /** Optional version for hot-reload compatibility */
   version?: string;
 }> & EphemeralAspect & {

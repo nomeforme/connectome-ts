@@ -3,7 +3,7 @@
  */
 
 import { VEILState, Frame, StreamRef } from '../veil/types';
-import { ElementRef } from '../spaces/types';
+import { ComponentRef } from '../spaces/types';
 import type { RenderedContext } from '../hud/types-v2';
 
 /**
@@ -61,23 +61,24 @@ export interface ComponentPersistenceMetadata {
  * Serialized component state
  */
 export interface SerializedComponent {
+  id?: string;
   className: string;
   version: number;
   properties: Record<string, SerializableValue>;
 }
 
 /**
- * Serialized element
+ * Serialized Space (replaces SerializedElement)
  */
-export interface SerializedElement {
+export interface SerializedSpace {
   id: string;
   name: string;
-  type: string;
-  active: boolean;
-  subscriptions: string[];
+  type: 'Space';
   components: SerializedComponent[];
-  children: SerializedElement[];
 }
+
+// Legacy type alias for compatibility during migration
+export type SerializedElement = SerializedSpace;
 
 /**
  * Persistence snapshot
@@ -91,7 +92,7 @@ export interface PersistenceSnapshot {
   
   // Core state
   veilState: SerializedVEILState;
-  elementTree: SerializedElement;
+  space: SerializedSpace; // Replaces elementTree
   
   // Optional compressed frame history
   compressedFrames?: CompressedFrameBatch[];
@@ -134,7 +135,7 @@ export interface FrameDelta {
   timestamp: string;
   lifecycleId: string;  // Must match Space's lifecycleId to be replayed
   frame: Frame;
-  elementOperations?: ElementOperation[];
+  componentOperations?: ComponentOperation[];
   renderedContext?: RenderedContextSnapshot;
 }
 
@@ -149,14 +150,12 @@ export interface RenderedContextSnapshot {
 }
 
 /**
- * Element tree operations
+ * Component operations
  */
-export type ElementOperation = 
-  | { type: 'add'; parent: ElementRef; element: SerializedElement }
-  | { type: 'remove'; element: ElementRef }
-  | { type: 'update'; element: ElementRef; changes: Partial<SerializedElement> }
-  | { type: 'addComponent'; element: ElementRef; component: SerializedComponent }
-  | { type: 'removeComponent'; element: ElementRef; componentIndex: number };
+export type ComponentOperation = 
+  | { type: 'addComponent'; component: SerializedComponent }
+  | { type: 'removeComponent'; componentId: string }
+  | { type: 'updateComponent'; componentId: string; changes: Partial<SerializedComponent> };
 
 /**
  * Persistence configuration

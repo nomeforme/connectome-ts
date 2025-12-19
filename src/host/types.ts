@@ -20,7 +20,7 @@ export interface ConnectomeApplication {
   createSpace(hostRegistry?: Map<string, any>, lifecycleId?: string, spaceId?: string): Promise<{ space: Space; veilState: VEILStateManager }>;
   
   /**
-   * Initialize the space with elements and components
+   * Initialize the space with components
    * Only called for fresh starts
    */
   initialize(space: Space, veilState: VEILStateManager): Promise<void>;

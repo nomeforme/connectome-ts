@@ -24,8 +24,8 @@ export interface ToolDefinition {
   parameters: Record<string, any>; // JSON schema
   
   // Element routing
-  elementPath?: string[];  // e.g., ['box'] for @box.open
-  elementId?: string;      // Direct element ID reference
+  componentPath?: string[];  // e.g., ['box'] for @box.open
+  componentId?: string;      // Direct element ID reference
   
   // Event emission
   emitEvent?: {
@@ -55,6 +55,12 @@ export interface AgentConfig {
   defaultMaxTokens?: number;  // Max tokens for LLM generation (e.g., 200-1000)
   contextTokenBudget?: number;  // Token budget for context window (e.g., 4000-8000)
   tools?: ToolDefinition[];
+  /**
+   * Enable thinking mode prefill for chain-of-thought reasoning
+   * When enabled, prefills with <thinking> tag to encourage visible reasoning
+   * NOTE: This is NOT Anthropic's Extended Thinking API, just prefill-based CoT
+   */
+  enableThinkingMode?: boolean;
 }
 
 /**

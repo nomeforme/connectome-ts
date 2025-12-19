@@ -21,12 +21,19 @@ class ComponentRegistryImpl {
   }
   
   /**
+   * Get a component constructor by name
+   */
+  getConstructor(name: string): ComponentConstructor | undefined {
+    return this.components.get(name);
+  }
+
+  /**
    * Create a component instance by name
    */
   create(name: string, ...args: any[]): Component | null {
     const Constructor = this.components.get(name);
     if (!Constructor) {
-      console.warn(`Component not found in registry: ${name}`);
+      // console.warn(`Component not found in registry: ${name}`);
       return null;
     }
     

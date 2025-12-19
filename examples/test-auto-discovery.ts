@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Test auto-discovery eliminating dual registration
+ * Test auto-discovery - FLEX Architecture
  * Shows the dramatically simplified developer experience
  */
 
@@ -10,32 +10,32 @@ config();
 import {
   VEILStateManager,
   Element,
-  BaseReceptor,
-  BaseEffector,
-  BaseTransform,
-  BaseMaintainer,
+  Space,
   createEventFacet
 } from '../src';
-import { SpaceWithAutoDiscovery } from '../src/spaces/space-with-discovery';
-import { 
-  SpaceEvent, 
-  ReadonlyVEILState, 
-  FacetDelta, 
-  EffectorResult,
-  MaintainerResult,
+import { Component } from '../src/spaces/component';
+import { ExecutionContext, SpaceEvent } from '../src/spaces/types';
+import {
+  ReadonlyVEILState,
+  FacetDelta,
+  FacetFilter,
   Frame
 } from '../src/spaces/receptor-effector-types';
-import { VEILDelta } from '../src/veil/types';
+import { VEILDelta, Facet } from '../src/veil/types';
 
 /**
- * Example button component that is BOTH element component AND receptor
+ * FLEX Receptor (priority 100) - handles UI clicks
  */
-class ButtonReceptor extends BaseReceptor {
+class ButtonReceptor extends Component {
+  priority = 100;
   topics = ['ui:click'];
-  
-  transform(event: SpaceEvent, state: ReadonlyVEILState): VEILDelta[] {
+
+  execute(context: ExecutionContext): void {
+    const { event } = context;
+    if (!event || event.topic !== 'ui:click') return;
+
     console.log('🔘 Button clicked!');
-    return [{
+    this.addOperation({
       type: 'addFacet',
       facet: createEventFacet({
         id: `button-press-${Date.now()}`,
@@ -43,15 +43,22 @@ class ButtonReceptor extends BaseReceptor {
         source: 'button',
         eventType: 'button-press'
       })
-    }];
+    });
   }
 }
 
 /**
- * Display component that shows messages
+ * FLEX Effector (priority 300) - displays messages
  */
-class DisplayEffector extends BaseEffector {
-  async process(changes: FacetDelta[], state: ReadonlyVEILState): Promise<EffectorResult> {
+class DisplayEffector extends Component {
+  priority = 300;
+  facetFilters: FacetFilter[] = [{ type: 'event' }];
+
+  execute(context: ExecutionContext): void {
+    const { frame, state } = context;
+    if (!frame) return;
+
+    const changes = this.buildChangesFromDeltas(frame.deltas, state);
     for (const change of changes) {
       if (change.type === 'added' && change.facet.type === 'event') {
         const event = change.facet as any;
@@ -60,24 +67,42 @@ class DisplayEffector extends BaseEffector {
         }
       }
     }
-    return { events: [] };
+  }
+
+  private buildChangesFromDeltas(deltas: VEILDelta[], state: ReadonlyVEILState): FacetDelta[] {
+    const changes: FacetDelta[] = [];
+    for (const delta of deltas) {
+      if (delta.type === 'addFacet' && this.matchesFacetFilters(delta.facet)) {
+        changes.push({ type: 'added', facet: delta.facet });
+      }
+    }
+    return changes;
+  }
+
+  private matchesFacetFilters(facet: Facet): boolean {
+    if (!this.facetFilters || this.facetFilters.length === 0) return true;
+    return this.facetFilters.some(filter => {
+      if (filter.type && facet.type !== filter.type) return false;
+      return true;
+    });
   }
 }
 
 /**
- * Counter that tracks button presses
+ * FLEX Transform (priority 200) - tracks button presses
  */
-class CounterTransform extends BaseTransform {
+class CounterTransform extends Component {
+  priority = 200;
   private count = 0;
-  
-  process(state: ReadonlyVEILState): VEILDelta[] {
-    const deltas: VEILDelta[] = [];
-    
+
+  execute(context: ExecutionContext): void {
+    const { state } = context;
+
     // Count button presses
     for (const [id, facet] of state.facets) {
       if (facet.type === 'event' && (facet as any).state?.eventType === 'button-press') {
         this.count++;
-        deltas.push({
+        this.addOperation({
           type: 'addFacet',
           facet: {
             id: `counter-${Date.now()}`,
@@ -88,65 +113,94 @@ class CounterTransform extends BaseTransform {
         });
       }
     }
-    
-    return deltas;
   }
 }
 
 /**
- * Logger that records all events
+ * FLEX Maintainer (priority 400) - logs all events
  */
-class EventLoggerMaintainer extends BaseMaintainer {
-  async process(frame: Frame, changes: FacetDelta[], state: ReadonlyVEILState): Promise<MaintainerResult> {
-    const eventCount = changes.filter(c => 
+class EventLoggerMaintainer extends Component {
+  priority = 400;
+  facetFilters: FacetFilter[] = [{ type: 'event' }];
+
+  execute(context: ExecutionContext): void {
+    const { frame, state } = context;
+    if (!frame) return;
+
+    const changes = this.buildChangesFromDeltas(frame.deltas, state);
+    const eventCount = changes.filter(c =>
       c.type === 'added' && c.facet.type === 'event'
     ).length;
-    
+
     if (eventCount > 0) {
       console.log(`📝 Logger: ${eventCount} events in frame ${frame.sequence}`);
     }
-    
-    return { events: [] };
+  }
+
+  private buildChangesFromDeltas(deltas: VEILDelta[], state: ReadonlyVEILState): FacetDelta[] {
+    const changes: FacetDelta[] = [];
+    for (const delta of deltas) {
+      if (delta.type === 'addFacet' && this.matchesFacetFilters(delta.facet)) {
+        changes.push({ type: 'added', facet: delta.facet });
+      }
+    }
+    return changes;
+  }
+
+  private matchesFacetFilters(facet: Facet): boolean {
+    if (!this.facetFilters || this.facetFilters.length === 0) return true;
+    return this.facetFilters.some(filter => {
+      if (filter.type && facet.type !== filter.type) return false;
+      return true;
+    });
   }
 }
 
 async function testAutoDiscovery() {
-  console.log('🚀 Auto-Discovery Test');
-  console.log('=====================\n');
-  
+  console.log('🚀 FLEX Auto-Discovery Test');
+  console.log('============================\n');
+
   const veilState = new VEILStateManager();
-  const space = new SpaceWithAutoDiscovery(veilState);
-  
+  const space = new Space(veilState);
+
   // Create UI structure
   const ui = new Element('ui-root');
   space.addChild(ui);
-  
+
   const button = new Element('button');
   ui.addChild(button);
-  
+
   const display = new Element('display');
   ui.addChild(display);
-  
+
   const system = new Element('system');
   space.addChild(system);
-  
-  console.log('✨ Adding components WITHOUT dual registration:\n');
-  
-  // Just add components - NO space.addReceptor() etc needed!
-  button.addComponent(new ButtonReceptor());
-  console.log('  ✓ button.addComponent(new ButtonReceptor())');
-  
-  display.addComponent(new DisplayEffector());
-  console.log('  ✓ display.addComponent(new DisplayEffector())');
-  
-  system.addComponent(new CounterTransform());
-  console.log('  ✓ system.addComponent(new CounterTransform())');
-  
-  system.addComponent(new EventLoggerMaintainer());
-  console.log('  ✓ system.addComponent(new EventLoggerMaintainer())');
-  
-  console.log('\n🔍 Space will auto-discover these components!\n');
-  
+
+  console.log('✨ Adding FLEX components with priority-based ordering:\n');
+
+  // Add components - in FLEX, they execute by priority order
+  const buttonReceptor = new ButtonReceptor();
+  button.addComponent(buttonReceptor);
+  space.addReceptor(buttonReceptor);
+  console.log('  ✓ ButtonReceptor (priority 100)');
+
+  const displayEffector = new DisplayEffector();
+  display.addComponent(displayEffector);
+  space.addEffector(displayEffector);
+  console.log('  ✓ DisplayEffector (priority 300)');
+
+  const counterTransform = new CounterTransform();
+  system.addComponent(counterTransform);
+  space.addTransform(counterTransform);
+  console.log('  ✓ CounterTransform (priority 200)');
+
+  const eventLogger = new EventLoggerMaintainer();
+  system.addComponent(eventLogger);
+  space.addMaintainer(eventLogger);
+  console.log('  ✓ EventLoggerMaintainer (priority 400)');
+
+  console.log('\n🔍 FLEX executes components in priority order: 100 → 200 → 300 → 400\n');
+
   // Simulate button clicks
   console.log('--- Click 1 ---');
   space.emit({
@@ -155,9 +209,9 @@ async function testAutoDiscovery() {
     timestamp: Date.now(),
     payload: { x: 100, y: 50 }
   });
-  
+
   await new Promise(resolve => setTimeout(resolve, 100));
-  
+
   console.log('\n--- Click 2 ---');
   space.emit({
     topic: 'ui:click',
@@ -165,16 +219,18 @@ async function testAutoDiscovery() {
     timestamp: Date.now(),
     payload: { x: 100, y: 50 }
   });
-  
+
   await new Promise(resolve => setTimeout(resolve, 100));
-  
+
   // Add component dynamically
   console.log('\n🎯 Adding component dynamically...');
   const newButton = new Element('second-button');
   ui.addChild(newButton);
-  newButton.addComponent(new ButtonReceptor());
+  const newButtonReceptor = new ButtonReceptor();
+  newButton.addComponent(newButtonReceptor);
+  space.addReceptor(newButtonReceptor);
   console.log('  ✓ Dynamically added second button');
-  
+
   console.log('\n--- Click 3 (from new button) ---');
   space.emit({
     topic: 'ui:click',
@@ -182,15 +238,15 @@ async function testAutoDiscovery() {
     timestamp: Date.now(),
     payload: { x: 200, y: 100 }
   });
-  
+
   await new Promise(resolve => setTimeout(resolve, 100));
-  
-  console.log('\n✅ Benefits demonstrated:');
-  console.log('  • No dual registration needed');
-  console.log('  • Components just work when added to elements');
+
+  console.log('\n✅ FLEX Benefits demonstrated:');
+  console.log('  • All components extend Component');
+  console.log('  • Priority determines execution order');
   console.log('  • Dynamic component addition supported');
-  console.log('  • Single source of truth (element tree)');
-  console.log('  • Zero boilerplate!');
+  console.log('  • Simple, predictable execution flow');
+  console.log('  • State updates visible to later components!');
 }
 
 testAutoDiscovery().catch(console.error);

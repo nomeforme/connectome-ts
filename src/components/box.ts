@@ -1,7 +1,7 @@
-import { Element } from '../spaces/element';
+import { Component } from '../spaces/component';
+import { Space } from '../spaces/space';
 import { StateComponent, InteractiveComponent } from './base-components';
 import { SpaceEvent } from '../spaces/types';
-import { stopPropagation } from '../spaces/event-utils';
 
 /**
  * Box configuration
@@ -108,9 +108,19 @@ class BoxInteractionComponent extends InteractiveComponent {
   };
   
   private stateComponent!: BoxStateComponent;
+  private stateComponentId: string;
+
+  constructor(stateComponentId: string) {
+    super();
+    this.stateComponentId = stateComponentId;
+  }
   
   onMount(): void {
-    this.stateComponent = this.element.getComponent(BoxStateComponent)!;
+    const comp = this.space.getComponentById(this.stateComponentId);
+    if (!comp || !(comp instanceof BoxStateComponent)) {
+        throw new Error(`BoxInteractionComponent could not find state component ${this.stateComponentId}`);
+    }
+    this.stateComponent = comp;
     
     // Register open action
     this.registerAction('open', async (params) => {
@@ -124,10 +134,10 @@ class BoxInteractionComponent extends InteractiveComponent {
     const state = this.stateComponent.getState();
     if (!state.isOpen) {
       this.addFacet({
-        id: `${this.element.id}-actions`,
+        id: `${this.id}-actions`,
         type: 'ambient',
-        scope: [this.element.id],
-        content: `You can open this box with @${this.element.id}.open()`
+        scope: [this.id],
+        content: `You can open this box with @${this.id}.open()`
       });
     }
   }
@@ -137,7 +147,7 @@ class BoxInteractionComponent extends InteractiveComponent {
     
     if (state.isOpen) {
       this.addFacet({
-        id: `box-${this.element.id}-already-open`,
+        id: `box-${this.id}-already-open`,
         type: 'event',
         content: 'The box is already open!'
       });
@@ -153,7 +163,7 @@ class BoxInteractionComponent extends InteractiveComponent {
       type: 'agent-activation',
       content: `Box opened ${method}`,
       attributes: {
-        source: this.element.name,
+        source: this.id,
         reason: `Box opened ${method}`,
         priority: 'high'
       }
@@ -164,15 +174,18 @@ class BoxInteractionComponent extends InteractiveComponent {
 /**
  * Create a box element with state and interaction components
  */
-export function createBox(config: BoxConfig): Element {
+export function createBox(space: Space, config: BoxConfig): void {
   const boxId = `box-${config.id}`;
-  const box = new Element(boxId, boxId);
   
-  // Add components
-  box.addComponent(new BoxStateComponent(config));
-  box.addComponent(new BoxInteractionComponent());
+  // Create components
+  const stateComp = new BoxStateComponent(config);
+  const stateId = `${boxId}-state`;
   
-  return box;
+  const interactComp = new BoxInteractionComponent(stateId);
+  
+  // Add to space with specific IDs
+  space.addComponent(stateComp, stateId);
+  space.addComponent(interactComp, `${boxId}-interaction`);
 }
 
 // For backwards compatibility, export Box as the factory function

@@ -26,11 +26,11 @@ class ConfiguredAgentComponent extends AgentComponent {
 class MultiAgentObserver extends VEILComponent {
   onMount() {
     console.log('[Observer] Mounted');
-    this.element.subscribe('*'); // Subscribe to all events
+    this.subscribe('*'); // Subscribe to all events
     
     // Check active agents every 2 seconds
     setInterval(() => {
-      const veilState = this.element.findSpace()?.veilState?.getState();
+      const veilState = this.space?.getVEILState?.().getState();
       if (veilState) {
         console.log('\n=== Active Agents ===');
         veilState.agents.forEach((agent, id) => {

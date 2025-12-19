@@ -27,6 +27,8 @@ export abstract class VEILComponent extends Component {
   // Track previous values for change detection
   private _previousValues: Map<string, any> = new Map();
   
+  protected _deferredOperations?: VEILDelta[];
+
   /**
    * Add an operation to the current frame
    */
@@ -38,9 +40,8 @@ export abstract class VEILComponent extends Component {
       return;
     }
     
-    const space = this.element?.space as Space | undefined;
-    if (!space) {
-      // Element not yet attached to space - defer operation
+    if (!this.space) {
+      // Not yet attached to space - defer operation
       if (!this._deferredOperations) {
         this._deferredOperations = [];
       }
@@ -48,7 +49,7 @@ export abstract class VEILComponent extends Component {
       return;
     }
     
-    const frame = space.getCurrentFrame ? space.getCurrentFrame() : undefined;
+    const frame = this.space.getCurrentFrame ? this.space.getCurrentFrame() : undefined;
     if (!frame) {
       throw new Error(
         `VEIL operations are only allowed during frame processing. ` +
@@ -64,19 +65,19 @@ export abstract class VEILComponent extends Component {
    * Track property change in transition
    */
   protected trackPropertyChange(propertyName: string, oldValue: any, newValue: any): void {
-    const space = this.element?.space as Space | undefined;
+    const space = this.space;
     if (!space) return;
     
     const frame = space.getCurrentFrame ? space.getCurrentFrame() : undefined;
     if (!frame?.transition) return;
     
-    // Get component index in element
-    const componentIndex = this.element.components.indexOf(this);
+    // Component index in space components list
+    const componentIndex = space.components.indexOf(this);
     if (componentIndex === -1) return;
     
     frame.transition.componentChanges.push({
-      elementRef: this.element.getRef(),
-      componentClass: this.constructor.name,
+      elementRef: this.getRef(),
+      componentType: this.constructor.name,
       componentIndex,
       property: propertyName,
       oldValue,
@@ -95,15 +96,12 @@ export abstract class VEILComponent extends Component {
     }
   }
   
-  protected _deferredOperations?: VEILDelta[];
-  
   /**
-   * Process any deferred operations when element is added to space
+   * Process any deferred operations when added to space
    */
   protected processDeferredOperations(): void {
-    if (this._deferredOperations && this.element?.space) {
-      const space = this.element.space as Space;
-      const frame = space.getCurrentFrame ? space.getCurrentFrame() : undefined;
+    if (this._deferredOperations && this.space) {
+      const frame = this.space.getCurrentFrame ? this.space.getCurrentFrame() : undefined;
       console.log(`[VEILComponent.processDeferredOperations] frame exists: ${!!frame}, operations: ${this._deferredOperations.length}`);
       if (frame) {
         for (const op of this._deferredOperations) {
@@ -115,7 +113,6 @@ export abstract class VEILComponent extends Component {
       this._deferredOperations = undefined;
     }
   }
-  
   
   /**
    * Add a facet to the current frame
@@ -155,7 +152,7 @@ export abstract class VEILComponent extends Component {
     const attrs = facetDef.attributes ?? {};
     const streamId = facetDef.streamId ?? (attrs.streamId as string) ?? 'default-stream';
     const streamType = facetDef.streamType ?? (attrs.streamType as string) ?? undefined;
-    const agentId = facetDef.agentId ?? (attrs.agentId as string) ?? this.element?.id ?? 'unknown-agent';
+    const agentId = facetDef.agentId ?? (attrs.agentId as string) ?? this.id ?? 'unknown-agent';
     const agentName = facetDef.agentName ?? (attrs.agentName as string) ?? undefined;
 
     switch (facetDef.type) {
@@ -175,7 +172,7 @@ export abstract class VEILComponent extends Component {
       case 'state': {
         const { entityType: attrEntityType, entityId: attrEntityId, state: explicitState, ...stateData } = attrs;
         const entityType = (attrEntityType as StateFacet['entityType']) ?? facetDef.entityType ?? 'component';
-        const entityId = (attrEntityId as string) ?? facetDef.entityId ?? this.element?.id ?? 'unknown-entity';
+        const entityId = (attrEntityId as string) ?? facetDef.entityId ?? this.id ?? 'unknown-entity';
         facet = createStateFacet({
           id: facetDef.id,
           content: facetDef.content ?? facetDef.displayName ?? '',
@@ -324,21 +321,21 @@ export abstract class InteractiveComponent extends VEILComponent {
     this.actions.set(name, handler);
     
     // Defer facet creation to next frame (onMount happens outside frame processing)
-    const toolName = `${this.element.id}.${name}`;
+    const toolName = `${this.id}.${name}`;
     if (!this._deferredOperations) {
       this._deferredOperations = [];
     }
     this._deferredOperations.push({
       type: 'addFacet',
       facet: {
-        id: `action-def-${this.element.id}-${name}`,
+        id: `action-def-${this.id}-${name}`,
         type: 'action-definition',
         // No content - action-definition is metadata, not renderable to LLM
         displayName: toolName,
         attributes: {
           toolName,
           actionName: name,
-          elementId: this.element.id,
+          componentId: this.id,
           parameters: config?.params || {},
           description: config?.description || `Perform ${name} action`
         }
@@ -369,41 +366,37 @@ export abstract class InteractiveComponent extends VEILComponent {
     this.registerAction(name, handler, config);
     
     // Create instruction facet (renderable to agent)
-    const toolName = `${this.element.id}.${name}`;
+    const toolName = `${this.id}.${name}`;
     if (!this._deferredOperations) {
       this._deferredOperations = [];
     }
     this._deferredOperations.push({
       type: 'addFacet',
       facet: {
-        id: `tool-instruction-${this.element.id}-${name}`,
+        id: `tool-instruction-${this.id}-${name}`,
         type: 'event',
         displayName: 'tool-instruction',
         content: instructions,
         state: {
-          source: this.element.id,
+          source: this.id,
           eventType: 'tool-instruction',
           metadata: {
             toolName,
             actionName: name,
-            category: config?.category || this.element.id
+            category: config?.category || this.id
           }
         },
-        scope: config?.scope  // Optional scoping for panels
+        scope: config?.scope
       } as Facet
     });
   }
   
   /**
    * Handle incoming events
-   * Note: element:action events are now handled by Element class delegation
    */
   async handleEvent(event: SpaceEvent): Promise<void> {
     // Call parent to handle first frame
     await super.handleEvent(event);
-    
-    // Element now handles element:action delegation to components
-    // so we don't need to process those events here
   }
 }
 

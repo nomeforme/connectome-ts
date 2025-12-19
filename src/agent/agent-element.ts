@@ -5,21 +5,23 @@
  * frame attribution and debugging.
  */
 
-import { Element } from '../spaces/element';
+import { Component } from '../spaces/component';
 
-export class AgentElement extends Element {
+export class AgentElement extends Component {
   constructor(name: string, id?: string) {
-    super(name, id);
+    super();
+    this.id = id || `agent-element-${Date.now()}`;
+    // name property doesn't exist on Component, maybe store it elsewhere or just ignore
   }
   
   /**
    * Override getRef to include proper element type
    */
-  getRef() {
+  public getRef() {
     const ref = super.getRef();
     return {
       ...ref,
-      elementType: 'AgentElement'
+      componentType: 'AgentElement'
     };
   }
 }

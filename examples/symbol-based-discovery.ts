@@ -1,139 +1,133 @@
 /**
- * Example showing symbol-based type identification
+ * Example showing symbol-based type identification - FLEX Architecture
  * Much more reliable than duck typing!
+ *
+ * Note: FLEX uses priority-based component ordering, making type
+ * identification less critical since all components extend Component.
  */
 
-import { 
-  BaseEffector, 
-  BaseReceptor,
-  BaseTransform,
+import {
   Space,
   Element,
   VEILStateManager
 } from '../src';
-import { 
-  isEffector, 
-  isReceptor, 
+import { Component } from '../src/spaces/component';
+import { ExecutionContext, SpaceEvent } from '../src/spaces/types';
+import {
+  isEffector,
+  isReceptor,
   isTransform,
   RETM_TYPE,
-  RETM_TYPES 
+  RETM_TYPES
 } from '../src/utils/retm-type-guards';
-import { SpaceEvent, ReadonlyVEILState, FacetDelta, EffectorResult } from '../src/spaces/receptor-effector-types';
-import { VEILDelta } from '../src/veil/types';
+import { ReadonlyVEILState, FacetDelta, FacetFilter } from '../src/spaces/receptor-effector-types';
+import { VEILDelta, Facet } from '../src/veil/types';
 
-// Example: Component that is BOTH an element component AND an effector
-class ButtonEffector extends BaseEffector {
-  // Symbol automatically inherited from BaseEffector
-  // readonly [RETM_TYPE] = RETM_TYPES.EFFECTOR; ✓
-  
-  async process(changes: FacetDelta[], state: ReadonlyVEILState): Promise<EffectorResult> {
+// Example: FLEX Component with effector-like behavior (priority 300)
+class ButtonEffector extends Component {
+  priority = 300;
+  facetFilters: FacetFilter[] = [{ type: 'event' }];
+
+  execute(context: ExecutionContext): void {
+    const { frame, state } = context;
+    if (!frame) return;
+
     console.log('Button effector processing changes');
-    return { events: [] };
+    // Process changes via this.buildChangesFromDeltas(frame.deltas, state)
   }
 }
 
-// Custom component without base class - just add the symbol
-class CustomReceptor implements Receptor {
-  // This is what enables auto-discovery!
-  readonly [RETM_TYPE] = RETM_TYPES.RECEPTOR;
-  
+// Custom FLEX component with receptor-like behavior (priority 100)
+class CustomReceptor extends Component {
+  priority = 100;
   topics = ['custom:event'];
-  
-  transform(event: SpaceEvent, state: ReadonlyVEILState): VEILDelta[] {
+
+  execute(context: ExecutionContext): void {
+    const { event } = context;
+    if (!event || event.topic !== 'custom:event') return;
+
     console.log('Custom receptor transforming event');
-    return [];
+    // Add operations via this.addOperation()
   }
-  
+
   // Component interface
-  async mount(element: Element): Promise<void> {
+  async onMount(): Promise<void> {
     console.log('Custom receptor mounted');
   }
-  
-  async unmount(): Promise<void> {
+
+  async onUnmount(): Promise<void> {
     console.log('Custom receptor unmounted');
   }
 }
 
-// Component that implements multiple RETM interfaces!
-class HybridComponent extends BaseTransform implements Transform, Effector {
-  // Can have multiple symbols if needed
-  readonly transformType = RETM_TYPES.TRANSFORM;
-  readonly effectorType = RETM_TYPES.EFFECTOR;
-  
-  // Override the inherited symbol to indicate primary type
-  readonly [RETM_TYPE] = RETM_TYPES.TRANSFORM;
-  
-  // Transform interface
-  process(state: ReadonlyVEILState): VEILDelta[] {
-    return [];
-  }
-  
-  // Also implements Effector!
-  async processEffector(changes: FacetDelta[], state: ReadonlyVEILState): Promise<EffectorResult> {
-    return { events: [] };
+// FLEX component that handles multiple concerns via priority ordering
+class HybridComponent extends Component {
+  priority = 200; // Transform-like
+
+  execute(context: ExecutionContext): void {
+    const { state } = context;
+    console.log('Hybrid component processing state');
+    // Process state and emit operations
   }
 }
 
-// Test the type guards
-function testTypeGuards() {
+// Test FLEX priority-based component ordering
+function testFlexComponents() {
   const button = new ButtonEffector();
   const custom = new CustomReceptor();
   const hybrid = new HybridComponent();
-  
-  // Symbol-based checks are fast and reliable
-  console.log('ButtonEffector is effector?', isEffector(button)); // true
-  console.log('ButtonEffector is receptor?', isReceptor(button)); // false
-  
-  console.log('CustomReceptor is receptor?', isReceptor(custom)); // true
-  console.log('CustomReceptor is effector?', isEffector(custom)); // false
-  
-  console.log('HybridComponent is transform?', isTransform(hybrid)); // true
-  console.log('HybridComponent is effector?', isEffector(hybrid)); // false (primary type wins)
-  
-  // Direct symbol check for multiple interfaces
-  console.log('Hybrid has transform symbol?', hybrid.transformType === RETM_TYPES.TRANSFORM); // true
-  console.log('Hybrid has effector symbol?', hybrid.effectorType === RETM_TYPES.EFFECTOR); // true
+
+  // In FLEX, components are ordered by priority, not type
+  console.log('ButtonEffector priority:', button.priority); // 300 (effector-like)
+  console.log('CustomReceptor priority:', custom.priority); // 100 (receptor-like)
+  console.log('HybridComponent priority:', hybrid.priority); // 200 (transform-like)
+
+  // All extend Component, so type guards are less relevant
+  console.log('All are Components:', [button, custom, hybrid].every(c => c instanceof Component));
 }
 
-// Auto-discovery in action
-async function demonstrateAutoDiscovery() {
+// FLEX discovery - components are collected and sorted by priority
+async function demonstrateFlexDiscovery() {
   const veilState = new VEILStateManager();
   const space = new Space(veilState);
-  
-  // Create elements with RETM components
+
+  // Create elements with FLEX components
   const buttonElement = new Element('button');
   space.addChild(buttonElement);
   buttonElement.addComponent(new ButtonEffector());
-  
-  const sensorElement = new Element('sensor');  
+
+  const sensorElement = new Element('sensor');
   space.addChild(sensorElement);
   sensorElement.addComponent(new CustomReceptor());
-  
-  // Space can discover these automatically!
-  // No need for space.addEffector() or space.addReceptor()
-  
-  // In Space implementation:
+
+  // In FLEX, components are discovered and sorted by priority
   const discoverComponents = () => {
-    const components: any[] = [];
+    const components: Component[] = [];
     const traverse = (elem: Element) => {
-      components.push(...elem.components);
+      components.push(...(elem.components as Component[]));
       elem.children.forEach(traverse);
     };
     traverse(space);
-    
-    const effectors = components.filter(isEffector);
-    const receptors = components.filter(isReceptor);
-    const transforms = components.filter(isTransform);
-    
-    console.log(`Discovered: ${effectors.length} effectors, ${receptors.length} receptors, ${transforms.length} transforms`);
+
+    // Sort by priority for FLEX execution order
+    components.sort((a, b) => a.priority - b.priority);
+
+    console.log('Components by priority:');
+    for (const comp of components) {
+      const role = comp.priority <= 100 ? 'receptor'
+        : comp.priority <= 200 ? 'transform'
+        : comp.priority <= 300 ? 'effector'
+        : 'maintainer';
+      console.log(`  ${comp.constructor.name} (priority ${comp.priority}) - ${role}`);
+    }
   };
-  
+
   discoverComponents();
 }
 
 // Run the examples
-console.log('=== Symbol-based Type Guards ===');
-testTypeGuards();
+console.log('=== FLEX Priority-Based Components ===');
+testFlexComponents();
 
-console.log('\n=== Auto-discovery Demo ===');
-demonstrateAutoDiscovery();
+console.log('\n=== FLEX Discovery Demo ===');
+demonstrateFlexDiscovery();

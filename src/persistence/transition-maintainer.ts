@@ -1,8 +1,10 @@
+import { Component } from '../spaces/component';
+import { ExecutionContext } from '../spaces/types';
 import { ReadonlyVEILState, SpaceEvent, FacetDelta } from '../spaces/receptor-effector-types';
-import { BaseMaintainer } from '../components/base-martem';
 import { TransitionNode } from './transition-types';
 import { VEILStateManager } from '../veil/veil-state';
 import { Frame } from '../veil/types';
+import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
@@ -12,13 +14,17 @@ export interface TransitionConfig {
 }
 
 /**
- * Maintainer that tracks frame transitions for time-travel debugging
- * Runs in Phase 4 after all other processing is complete
+ * TransitionMaintainer - Tracks frame transitions for time-travel debugging
+ *
+ * FLEX Component (constraint: priority 400 - Maintainer level)
+ * Runs after all other processing is complete.
  */
-export class TransitionMaintainer extends BaseMaintainer {
+export class TransitionMaintainer extends Component {
+  constraints = [priorityConstraint(ComponentPriority.MAINTAINER)];
+
   private currentBranch: string = 'main';
   private transitionsSinceSnapshot: number = 0;
-  
+
   constructor(
     private veilState: VEILStateManager,
     private config: TransitionConfig
@@ -26,15 +32,18 @@ export class TransitionMaintainer extends BaseMaintainer {
     super();
     this.initializeStorage();
   }
-  
-  async process(frame: Frame, changes: FacetDelta[], state: ReadonlyVEILState): Promise<import('../spaces/receptor-effector-types').MaintainerResult> {
+
+  execute(context: ExecutionContext): void {
+    const { frame } = context;
+    if (!frame) return;
+
     // Get the transition from the frame
     if (!frame.transition) {
-      return { events: [] };
+      return;
     }
-    
+
     const transition = frame.transition;
-    
+
     // Create transition node
     const node: TransitionNode = {
       sequence: transition.sequence,
@@ -42,14 +51,14 @@ export class TransitionMaintainer extends BaseMaintainer {
       branchName: this.currentBranch,
       transition
     };
-    
-    // Save transition
+
+    // Save transition (fire and forget)
     this.saveTransition(node).catch(err => {
       console.error('[TransitionMaintainer] Failed to save transition:', err);
     });
-    
+
     this.transitionsSinceSnapshot++;
-    
+
     // Check if we need a snapshot
     const snapshotInterval = this.config.snapshotInterval || 50;
     if (this.transitionsSinceSnapshot >= snapshotInterval) {
@@ -57,8 +66,6 @@ export class TransitionMaintainer extends BaseMaintainer {
         console.error('[TransitionMaintainer] Failed to create snapshot:', err);
       });
     }
-    
-    return { events: [] }; // No events to emit
   }
   
   private async initializeStorage(): Promise<void> {

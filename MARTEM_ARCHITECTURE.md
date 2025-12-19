@@ -1,8 +1,16 @@
 # MARTEM Architecture Design
 
-## Overview
+**⚠️ DEPRECATED**: This document describes the legacy MARTEM phase-based architecture which has been replaced by **FLEX** (Flat List Execution). This is kept for historical reference only.
 
-The MARTEM architecture unifies all processing components under a single Component interface, managed by the element tree. This replaces the split between "legacy components" and "RETM types".
+**Current Architecture**: See `FLEX_ARCHITECTURE.md` for the active system design.
+
+**Status**: The MARTEM phase system (`runPhase0`, `runPhase1`, etc.) has been removed. Component base classes (`BaseReceptor`, `BaseTransform`, etc.) remain as a compatibility shim that provides default priorities for FLEX execution.
+
+---
+
+## Overview (Historical)
+
+The MARTEM architecture unified all processing components under a single Component interface, managed by the element tree. This replaced the split between "legacy components" and "RETM types".
 
 ## Component Hierarchy
 

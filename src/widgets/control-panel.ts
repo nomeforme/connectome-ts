@@ -8,6 +8,7 @@
 import { InteractiveComponent } from '../components/base-components';
 import { persistent } from '../persistence/decorators';
 import type { SpaceEvent } from '../spaces/types';
+import type { ActionContext } from '../spaces/action-effector';
 
 /**
  * Metadata for a registered panel tool
@@ -27,6 +28,10 @@ export abstract class ControlPanelComponent extends InteractiveComponent {
 
   // Store tool metadata (NOT facets!) - transient, recreated on mount
   private toolsMetadata: PanelToolMetadata[] = [];
+
+  // Store stream context from the action that triggered open/close
+  // This allows panel:toggled events to carry stream attribution
+  private currentActionContext?: ActionContext;
 
   /**
    * Subclasses must provide a unique panel ID
@@ -60,8 +65,15 @@ export abstract class ControlPanelComponent extends InteractiveComponent {
     this.toolsMetadata = [];
 
     // Register panel control actions (just the handlers, no facets yet)
-    this.actions.set('open', async () => { await this.openPanel(); });
-    this.actions.set('close', async () => { await this.closePanel(); });
+    // Handlers receive (params, actionContext) from ActionEffector
+    this.actions.set('open', async (_params: any, context?: ActionContext) => {
+      this.currentActionContext = context;
+      await this.openPanel();
+    });
+    this.actions.set('close', async (_params: any, context?: ActionContext) => {
+      this.currentActionContext = context;
+      await this.closePanel();
+    });
 
     // Note: Subclasses will call registerPanelTool() in their onMount()
     // After subclass onMount() completes, onMountComplete() will be called
@@ -76,13 +88,13 @@ export abstract class ControlPanelComponent extends InteractiveComponent {
     // ControlPanelActionsReceptor will create facets declaratively
     console.log(`[ControlPanel:${this.getPanelId()}] Emitting tools-registered event with ${this.toolsMetadata.length} tools`);
 
-    this.element.emit({
+    this.emit({
       topic: 'panel:tools-registered',
       timestamp: Date.now(),
       payload: {
         panelId: this.getPanelId(),
         displayName: this.getPanelDisplayName(),
-        elementId: this.element.id,
+        componentId: this.id,
         componentType: this.constructor.name,
         tools: this.toolsMetadata,
         panelScope: this.getPanelScope()
@@ -92,7 +104,7 @@ export abstract class ControlPanelComponent extends InteractiveComponent {
     // Initialize scope state based on current isOpen state
     // This ensures tools are hidden if panel starts closed
     console.log(`[ControlPanel:${this.getPanelId()}] Initializing scope state: ${this.isOpen ? 'active' : 'inactive'}`);
-    this.element.emit({
+    this.emit({
       topic: 'panel:scope-change',
       timestamp: Date.now(),
       payload: {
@@ -124,7 +136,7 @@ export abstract class ControlPanelComponent extends InteractiveComponent {
     this.isOpen = true;
 
     // Emit scope activation event (declarative!)
-    this.element.emit({
+    this.emit({
       topic: 'panel:scope-change',
       timestamp: Date.now(),
       payload: {
@@ -145,8 +157,8 @@ export abstract class ControlPanelComponent extends InteractiveComponent {
     // Call subclass hook
     await this.onPanelOpened();
 
-    // Re-activate agent so it can continue with new tools visible
-    this.reactivateAgent('Panel opened - new tools available');
+    // Emit semantic panel:toggled event - ActivationDecider decides whether to activate
+    this.emitPanelToggled('opened');
   }
 
   /**
@@ -165,7 +177,7 @@ export abstract class ControlPanelComponent extends InteractiveComponent {
     this.isOpen = false;
 
     // Emit scope deactivation event (declarative!)
-    this.element.emit({
+    this.emit({
       topic: 'panel:scope-change',
       timestamp: Date.now(),
       payload: {
@@ -186,39 +198,27 @@ export abstract class ControlPanelComponent extends InteractiveComponent {
     // Call subclass hook
     await this.onPanelClosed();
 
-    // Re-activate agent
-    this.reactivateAgent('Panel closed');
+    // Emit semantic panel:toggled event - ActivationDecider decides whether to activate
+    this.emitPanelToggled('closed');
   }
 
   /**
-   * Re-activate the agent so it can continue its turn with updated context
+   * Emit panel:toggled event - agent may want to continue with updated context
+   * Includes stream context from the action that triggered this toggle
    */
-  protected reactivateAgent(reason: string): void {
-    // Emit veil:operation event to add agent-activation facet in next frame
-    // This is the declarative way - event will be processed by VEILOperationReceptor
-    console.log(`[ControlPanel:${this.getPanelId()}] Emitting agent-activation facet: ${reason}`);
+  protected emitPanelToggled(state: 'opened' | 'closed'): void {
+    const ctx = this.currentActionContext;
+    console.log(`[ControlPanel:${this.getPanelId()}] Emitting panel:toggled (${state}), streamId: ${ctx?.streamId}`);
 
-    this.element.emit({
-      topic: 'veil:operation',
+    this.emit({
+      topic: 'panel:toggled',
       timestamp: Date.now(),
       payload: {
-        operation: {
-          type: 'addFacet',
-          facet: {
-            id: `activation-panel-${this.getPanelId()}-${Date.now()}`,
-            type: 'agent-activation',
-            content: reason,
-            state: {
-              reason,
-              priority: 'normal',
-              source: `control-panel-${this.getPanelId()}`,
-              metadata: {
-                trigger: 'control-panel-toggle',
-                panelId: this.getPanelId()
-              }
-            }
-          }
-        }
+        panelId: this.getPanelId(),
+        state,
+        // Include stream context for activation routing
+        streamId: ctx?.streamId,
+        streamType: ctx?.streamType
       }
     });
   }

@@ -1,44 +1,54 @@
 /**
- * Test that Phase 2 transforms can see changes from previous iterations
+ * Test that FLEX transforms can see changes from previous iterations
  * This verifies the fix where we apply deltas directly instead of creating frames
  */
 
 import { Space } from './src/spaces/space';
 import { VEILStateManager } from './src/veil/veil-state';
-import { BaseTransform, BaseReceptor } from './src/components/base-martem';
+import { Component } from './src/spaces/component';
+import { ExecutionContext } from './src/spaces/types';
 import { ReadonlyVEILState, VEILDelta, SpaceEvent, Facet } from './src/spaces/receptor-effector-types';
 
 // Receptor: Converts trigger events to facets
-class TriggerReceptor extends BaseReceptor {
+class TriggerReceptor extends Component {
+  priority = 100;
   topics = ['test:trigger'];
-  
-  transform(event: SpaceEvent, state: ReadonlyVEILState): Facet[] {
+
+  execute(context: ExecutionContext): void {
+    const { event } = context;
+    if (!event || event.topic !== 'test:trigger') return;
+
     console.log('[Receptor] Converting trigger event to facet');
-    return [{
-      id: 'trigger-event',
-      type: 'event',
-      content: 'Trigger event received',
-      eventType: 'trigger'
-    }];
+    this.addOperation({
+      type: 'addFacet',
+      facet: {
+        id: 'trigger-event',
+        type: 'event',
+        content: 'Trigger event received',
+        eventType: 'trigger'
+      } as any
+    });
   }
 }
 
 // Transform 1: Adds a counter facet when it sees a trigger
-class CounterAdderTransform extends BaseTransform {
-  process(state: ReadonlyVEILState): VEILDelta[] {
-    const deltas: VEILDelta[] = [];
-    
+class CounterAdderTransform extends Component {
+  priority = 200;
+
+  execute(context: ExecutionContext): void {
+    const { state } = context;
+
     // Look for trigger facet
     const hasTrigger = Array.from(state.facets.values()).some(
       f => f.type === 'event' && (f as any).eventType === 'trigger'
     );
-    
+
     // Check if counter already exists
     const hasCounter = state.facets.has('counter');
-    
+
     if (hasTrigger && !hasCounter) {
       console.log('[Transform 1] Adding counter facet');
-      deltas.push({
+      this.addOperation({
         type: 'addFacet',
         facet: {
           id: 'counter',
@@ -48,24 +58,24 @@ class CounterAdderTransform extends BaseTransform {
         }
       });
     }
-    
-    return deltas;
   }
 }
 
 // Transform 2: Increments counter when it sees it
-class CounterIncrementerTransform extends BaseTransform {
-  process(state: ReadonlyVEILState): VEILDelta[] {
-    const deltas: VEILDelta[] = [];
-    
+class CounterIncrementerTransform extends Component {
+  priority = 201;  // Higher priority to run after CounterAdderTransform
+
+  execute(context: ExecutionContext): void {
+    const { state } = context;
+
     const counter = state.facets.get('counter');
-    
+
     if (counter && counter.type === 'state') {
       const currentCount = (counter as any).state?.count || 0;
-      
+
       if (currentCount < 3) {
         console.log(`[Transform 2] Incrementing counter from ${currentCount} to ${currentCount + 1}`);
-        deltas.push({
+        this.addOperation({
           type: 'rewriteFacet',
           id: 'counter',
           changes: {
@@ -74,8 +84,6 @@ class CounterIncrementerTransform extends BaseTransform {
         });
       }
     }
-    
-    return deltas;
   }
 }
 

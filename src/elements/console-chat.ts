@@ -1,12 +1,11 @@
 /**
- * Console Chat Element
+ * Console Chat Component
  * 
  * Provides interactive console-based chat interface for testing the full system.
  * Handles async console input and routes messages through VEIL.
  */
 
 import * as readline from 'readline';
-import { Element } from '../spaces/element';
 import { Component } from '../spaces/component';
 import { Space } from '../spaces/space';
 import { SpaceEvent, StreamRef } from '../spaces/types';
@@ -62,9 +61,9 @@ export class ConsoleChatComponent extends Component {
     this.startListening();
     
     // Subscribe to events we care about
-    this.element.subscribe('frame:start');
-    this.element.subscribe('frame:end');
-    this.element.subscribe('agent:pending-activation');
+    this.subscribe('frame:start');
+    this.subscribe('frame:end');
+    this.subscribe('agent:pending-activation');
     
     console.log('[Console Chat] Ready! Type messages to chat with the agent.');
     console.log('[Console Chat] Commands: /quit to exit, /sleep to toggle agent sleep\n');
@@ -112,15 +111,17 @@ export class ConsoleChatComponent extends Component {
       if (this.isActive) {
         console.log('\n[Console Chat] Goodbye!');
         // Emit an event to allow cleanup
-        const space = this.element?.space as any;
+        const space = this.space;
         if (space && space.queueEvent) {
           space.queueEvent({
             topic: 'console:closing',
             payload: {},
             source: {
-              elementId: this.element?.id || 'console',
-              elementPath: this.element?.getPath() || []
-            }
+              componentId: this.id || 'console',
+              componentPath: ['root', this.id || 'console'],
+              componentType: this.constructor.name
+            },
+            timestamp: Date.now()
           });
         }
         // Give a moment for cleanup
@@ -144,9 +145,8 @@ export class ConsoleChatComponent extends Component {
         const duration = parts[1] ? parseInt(parts[1], 10) : undefined;
         
         // Emit agent command with optional duration
-        this.element.emit({
+        this.emit({
           topic: 'agent:command',
-          source: this.element.getRef(),
           payload: { 
             type: 'sleep',
             duration: duration // duration in seconds
@@ -159,9 +159,8 @@ export class ConsoleChatComponent extends Component {
           
           // Set up auto-wake timer
           setTimeout(() => {
-            this.element.emit({
+            this.emit({
               topic: 'agent:command',
-              source: this.element.getRef(),
               payload: { type: 'wake' },
               timestamp: Date.now()
             });
@@ -214,9 +213,8 @@ export class ConsoleChatComponent extends Component {
     };
     
     // Emit event to trigger frame creation
-    this.element.emit({
+    this.emit({
       topic: 'console:input',
-      source: this.element.getRef(),
       payload: { message },
       timestamp: Date.now(),
       priority: 'high' // User messages have high priority
@@ -236,7 +234,7 @@ export class ConsoleChatComponent extends Component {
   async handleEvent(event: SpaceEvent): Promise<void> {
     // Handle frame:start - add pending message or activation operations
     if (event.topic === 'frame:start' && (this.pendingMessage || this.pendingActivationFacetId)) {
-      const space = this.element.space as Space;
+      const space = this.space;
       const frame = space.getCurrentFrame();
       
       if (!frame) {
@@ -310,7 +308,7 @@ export class ConsoleChatComponent extends Component {
     
     // Handle frame end - check for speech facets targeted to console
     if (event.topic === 'frame:end') {
-      const space = this.element.space as Space;
+      const space = this.space;
       const veilState = space?.getVEILState();
       if (veilState) {
         const state = veilState.getState();
@@ -360,9 +358,8 @@ export class ConsoleChatComponent extends Component {
       this.pendingActivationFacetId = id;
       
       // Emit event to trigger frame processing
-      this.element.emit({
+      this.emit({
         topic: 'console:input',
-        source: this.element.getRef(),
         payload: { message: '[Processing pending activation from sleep]' },
         timestamp: Date.now(),
         priority: 'high' // Pending activations from sleep have high priority

@@ -1,7 +1,8 @@
 /**
  * CompressionTransform
  *
- * Coordinates automatic compression of frame ranges using a CompressionEngine.
+ * FLEX Component (constraint: priority 250) that coordinates automatic compression of
+ * frame ranges using a CompressionEngine.
  *
  * Responsibilities:
  *  - Monitor VEIL frame history and detect when compression thresholds are met.
@@ -11,13 +12,15 @@
  *  - Populate the engine cache so ContextTransform/HUD pick up replacements.
  */
 
-import { BaseTransform } from '../components/base-martem';
+import { Component } from '../spaces/component';
+import { ExecutionContext } from '../spaces/types';
 import { ReadonlyVEILState } from '../spaces/receptor-effector-types';
 import { Facet, VEILDelta } from '../veil/types';
 import { FrameTrackingHUD } from '../hud/frame-tracking-hud';
 import { CompressionEngine, CompressibleRange, CompressionConfig, RenderedFrame, StateDelta } from '../compression/types-v2';
 import { extractFrameRange } from '../hud/frame-extraction';
 import { VEILStateManager } from '../veil/veil-state';
+import { priorityConstraint } from '../spaces/constraints';
 
 interface CompressionTransformOptions {
   engine: CompressionEngine;
@@ -51,12 +54,12 @@ interface CompressionTask {
   lastError?: string;
 }
 
-export class CompressionTransform extends BaseTransform {
-  // Priority: Run late in Phase 2, AFTER frame snapshots are captured (priority 200)
+export class CompressionTransform extends Component {
+  // Run late in execution, AFTER frame snapshots are captured (priority 200)
   // This allows compression to use pre-captured snapshots instead of re-rendering
   // TODO [constraint-solver]: Replace with requires = ['frame-snapshots'], provides = ['compressed-frames']
-  priority = 250;
-  
+  constraints = [priorityConstraint(250)];
+
   private readonly engine: CompressionEngine;
   private readonly engineName: string;
   private readonly hud: FrameTrackingHUD;
@@ -90,16 +93,20 @@ export class CompressionTransform extends BaseTransform {
     };
   }
 
-  process(state: ReadonlyVEILState): VEILDelta[] {
-    const deltas: VEILDelta[] = [];
+  execute(context: ExecutionContext): void {
+    const { state } = context;
+    this.processCompression(state);
+  }
+
+  private processCompression(state: ReadonlyVEILState): void {
     const lastFrame = state.frameHistory[state.frameHistory.length - 1];
 
     if (!lastFrame || state.frameHistory.length < this.options.minFramesBeforeCompression) {
-      return deltas;
+      return;
     }
 
     if (lastFrame.sequence === this.lastProcessedSequence) {
-      return deltas;
+      return;
     }
 
     const renderedFrames = this.getRenderedFrames(state);
@@ -110,16 +117,15 @@ export class CompressionTransform extends BaseTransform {
 
     const planFacet = this.buildPlanFacet();
     if (planFacet) {
-      deltas.push({ type: 'addFacet', facet: planFacet });
+      this.addOperation({ type: 'addFacet', facet: planFacet });
     }
 
     const resultFacets = this.buildResultFacets();
     for (const facet of resultFacets) {
-      deltas.push({ type: 'addFacet', facet });
+      this.addOperation({ type: 'addFacet', facet });
     }
 
     this.lastProcessedSequence = lastFrame.sequence;
-    return deltas;
   }
 
   private getRenderedFrames(state: ReadonlyVEILState): RenderedFrame[] {
@@ -156,7 +162,7 @@ export class CompressionTransform extends BaseTransform {
     console.log(`[CompressionTransform] Snapshots not available, re-rendering ${frameHistory.length} frames`);
     
     // Get VEILStateManager from Space
-    const space = this.element?.findSpace() as any;
+    const space = this.space as any;
     if (!space?.getVEILStateManager) {
       console.error('[CompressionTransform] Cannot get VEILStateManager from Space');
       return [];

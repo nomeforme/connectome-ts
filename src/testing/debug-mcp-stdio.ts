@@ -77,9 +77,9 @@ const TOOLS = {
     parameters: {
       type: 'object',
       properties: {
-        elementId: { type: 'string', description: 'Element ID' }
+        componentId: { type: 'string', description: 'Element ID' }
       },
-      required: ['elementId']
+      required: ['componentId']
     }
   },
   updateElementProps: {
@@ -87,10 +87,10 @@ const TOOLS = {
     parameters: {
       type: 'object',
       properties: {
-        elementId: { type: 'string', description: 'Element ID' },
+        componentId: { type: 'string', description: 'Element ID' },
         props: { type: 'object', description: 'Properties to update' }
       },
-      required: ['elementId', 'props']
+      required: ['componentId', 'props']
     }
   },
   injectEvent: {
@@ -123,13 +123,14 @@ const TOOLS = {
     }
   },
   searchFrames: {
-    description: 'Search frames for specific patterns',
+    description: 'Search frames for specific patterns. Returns lightweight match summaries with context snippets. Use getFrame(frameId) to inspect matching frames in detail.',
     parameters: {
       type: 'object',
       properties: {
         pattern: { type: 'string', description: 'Search pattern' },
         type: { type: 'string', enum: ['operation', 'event', 'error'], description: 'Frame type filter' },
-        limit: { type: 'number', description: 'Maximum results' }
+        limit: { type: 'number', description: 'Maximum frames to search through (default: 100)' },
+        maxResults: { type: 'number', description: 'Maximum matching results to return (default: 20)' }
       },
       required: ['pattern']
     }
@@ -152,7 +153,7 @@ const TOOLS = {
     parameters: {
       type: 'object',
       properties: {
-        elementId: { type: 'string', description: 'Starting element ID (omit for root)' },
+        componentId: { type: 'string', description: 'Starting element ID (omit for root)' },
         depth: { type: 'number', description: 'Maximum depth to traverse' }
       }
     }

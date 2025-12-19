@@ -6,11 +6,12 @@ import {
   StreamRef,
   AgentInfo,
   hasEphemeralAspect,
-  VEILDelta
+  VEILDelta,
+  ReadonlyVEILState
 } from '../veil/types';
 import { createEventFacet } from '../helpers/factories';
 import { SpaceEvent } from './types';
-import { Component } from '../types/component';
+import { Component } from './component';
 
 /**
  * Modulator: Phase 0 - Preprocesses events before they reach receptors
@@ -100,18 +101,18 @@ export interface AfferentError {
 }
 
 /**
- * Receptor: Phase 1 - Converts events into VEIL deltas
+ * Receptor: Converts events into VEIL deltas
  * MUST be stateless - same input always produces same output
  * Can add facets, rewrite existing facets (e.g., offline edits), or remove facets
- * 
- * TIMING: Returned deltas are applied IMMEDIATELY before Phase 2 begins
+ *
+ * TIMING: Returned deltas are applied immediately before Transform execution
  */
 export interface Receptor extends Component {
   /** 
    * Optional priority for execution order (lower = runs earlier).
    * Default: 50
    */
-  priority?: number;
+  // Inherited from Component: priority: number;
   
   /** Which event topics this receptor handles */
   topics: string[];
@@ -124,11 +125,11 @@ export interface Receptor extends Component {
 }
 
 /**
- * Transform: Phase 2 - Transforms VEIL state
+ * Transform: Transforms VEIL state
  * Used for derived state, cleanup, indexes, etc.
  * Can add, change, or remove facets - just like Receptors
- * 
- * TIMING: Phase 2 runs iteratively. Each transform's deltas are applied
+ *
+ * TIMING: Transform execution is iterative. Each transform's deltas are applied
  * IMMEDIATELY, visible to subsequent iterations. Stops when no deltas produced.
  * 
  * Execution Order:
@@ -150,14 +151,14 @@ export interface Transform extends Component {
    * 
    * If unspecified, uses registration order.
    */
-  priority?: number;
+  // Inherited from Component: priority: number;
   
   /** Optional filters to limit which facets trigger this transform */
   facetFilters?: FacetFilter[];
   
-  /** 
+  /**
    * Process current state to produce VEIL operations
-   * NOTE: May be called multiple times per frame due to Phase 2 iteration
+   * NOTE: May be called multiple times per frame due to iterative execution
    * IMPORTANT: Deltas applied immediately - design transforms to be idempotent
    */
   process(state: ReadonlyVEILState): VEILDelta[];
@@ -172,7 +173,7 @@ export interface Effector extends Component {
    * Optional priority for execution order (lower = runs earlier).
    * Default: 50
    */
-  priority?: number;
+  // Inherited from Component: priority: number;
   
   /** Which facet types/patterns this effector watches */
   facetFilters?: FacetFilter[];
@@ -221,26 +222,6 @@ export interface FacetDelta {
   oldFacet?: Facet; // For 'changed' type
 }
 
-/**
- * Read-only view of VEIL state
- */
-export interface ReadonlyVEILState {
-  facets: ReadonlyMap<string, Facet>;
-  scopes: ReadonlySet<string>;
-  streams: ReadonlyMap<string, any>;
-  agents: ReadonlyMap<string, AgentInfo>;
-  currentStream?: StreamRef;
-  currentAgent?: string;
-  frameHistory: ReadonlyArray<Frame>;
-  currentSequence: number;
-  removals: ReadonlyMap<string, 'hide' | 'delete'>;
-  
-  // Helper methods
-  getFacetsByType(type: string): Facet[];
-  getFacetsByAspect(aspect: keyof Facet, value: any): Facet[];
-  hasFacet(id: string): boolean;
-}
-
 // Ephemeral facets are not actively cleaned up - they naturally fade away
 // by not being persisted and being ignored by systems that don't need them
 
@@ -266,7 +247,7 @@ export interface Maintainer extends Component {
    * Optional priority for execution order (lower = runs earlier).
    * Default: 50
    */
-  priority?: number;
+  // Inherited from Component: priority: number;
   
   /** 
    * Perform maintenance operations
@@ -279,4 +260,4 @@ export interface Maintainer extends Component {
 }
 
 // Re-export common types for convenience
-export { SpaceEvent, Facet, Frame, VEILDelta };
+export { SpaceEvent, Facet, Frame, VEILDelta, ReadonlyVEILState };

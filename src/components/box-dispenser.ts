@@ -1,10 +1,10 @@
-import { Element } from '../spaces/element';
 import { InteractiveComponent, VEILComponent } from './base-components';
 import { ControlPanelComponent } from './control-panel';
 import { ContentGeneratorComponent } from './content-generator';
 import { createBox } from './box';
 import { SpaceEvent } from '../spaces/types';
 import { LLMProvider } from '../llm/llm-interface';
+import { Space } from '../spaces/space';
 
 /**
  * Component that handles box dispensing
@@ -23,15 +23,19 @@ export class BoxDispenserComponent extends InteractiveComponent {
     }
   };
   
-  private controlPanel!: ControlPanelComponent;
-  private contentGenerator!: ContentGeneratorComponent;
+  public controlPanel!: ControlPanelComponent;
+  public contentGenerator!: ContentGeneratorComponent;
   private boxCount = 0;
   
   onMount(): void {
-    // Get other components
-    this.controlPanel = this.element.getComponent(ControlPanelComponent)!;
-    this.contentGenerator = this.element.getComponent(ContentGeneratorComponent)!;
-    
+    // Dependencies should be injected
+    if (!this.controlPanel || !this.contentGenerator) {
+        console.warn('BoxDispenserComponent: dependencies not injected, attempting lookup');
+        // Fallback lookup if not injected
+        this.controlPanel = this.space.getComponent(ControlPanelComponent)!;
+        this.contentGenerator = this.space.getComponent(ContentGeneratorComponent)!;
+    }
+
     // Register actions
     this.registerAction('dispense', async () => this.dispenseBox());
     this.registerAction('setSize', async (params) => this.setSize(params?.value || params));
@@ -104,15 +108,12 @@ export class BoxDispenserComponent extends InteractiveComponent {
     );
     
     // Create new box
-    const box = createBox({
+    createBox(this.space, {
       id: `${this.boxCount}`,
       size: settings.size,
       color: settings.color,
       contents
     });
-    
-    // Add box to the space
-    this.element.parent?.addChild(box);
     
     // Update dispenser state - the transition renderer will handle the narrative
     this.updateState('dispenser-state', {
@@ -189,12 +190,10 @@ export class DispenseButtonComponent extends VEILComponent {
     });
     
     // Emit button press event
-    this.element.emit({
+    this.emit({
       topic: 'button:pressed',
-      source: this.element.getRef(),
       payload: {},
-      timestamp: Date.now(),
-      bubbles: true // Let it bubble up to dispenser
+      timestamp: Date.now()
     });
   }
 }
@@ -202,14 +201,20 @@ export class DispenseButtonComponent extends VEILComponent {
 /**
  * Create a box dispenser element with all necessary components
  */
-export function createBoxDispenser(llmProvider?: LLMProvider): Element {
-  const dispenser = new Element('dispenser', 'dispenser');
+export function createBoxDispenser(space: Space, llmProvider?: LLMProvider): void {
+  // Create components
+  const controlPanel = new ControlPanelComponent();
+  const contentGenerator = new ContentGeneratorComponent(llmProvider);
+  const dispenser = new BoxDispenserComponent();
+  const button = new DispenseButtonComponent();
+  
+  // Inject dependencies
+  dispenser.controlPanel = controlPanel;
+  dispenser.contentGenerator = contentGenerator;
   
   // Add all components
-  dispenser.addComponent(new ControlPanelComponent());
-  dispenser.addComponent(new ContentGeneratorComponent(llmProvider));
-  dispenser.addComponent(new BoxDispenserComponent());
-  dispenser.addComponent(new DispenseButtonComponent());
-  
-  return dispenser;
+  space.addComponent(controlPanel);
+  space.addComponent(contentGenerator);
+  space.addComponent(dispenser);
+  space.addComponent(button);
 }

@@ -3,24 +3,24 @@
  * Each frame carries a transition object that systems write to during processing
  */
 
-import { ElementRef } from '../spaces/types';
+import { ComponentRef } from '../spaces/types';
 import { VEILOperation } from '../veil/types';
 
 /**
  * Element tree operation
  */
 export type ElementOperation = 
-  | { type: 'add-element'; parentRef: ElementRef; element: { id: string; name: string; type: string } }
-  | { type: 'remove-element'; elementRef: ElementRef }
-  | { type: 'move-element'; elementRef: ElementRef; newParentRef: ElementRef }
-  | { type: 'update-element'; elementRef: ElementRef; changes: { active?: boolean; subscriptions?: string[] } };
+  | { type: 'add-element'; parentRef: ComponentRef; element: { id: string; name: string; type: string } }
+  | { type: 'remove-element'; elementRef: ComponentRef }
+  | { type: 'move-element'; elementRef: ComponentRef; newParentRef: ComponentRef }
+  | { type: 'update-element'; elementRef: ComponentRef; changes: { active?: boolean; subscriptions?: string[] } };
 
 /**
  * Component state change
  */
 export interface ComponentChange {
-  elementRef: ElementRef;
-  componentClass: string;
+  elementRef: ComponentRef;
+  componentType: string;
   componentIndex: number;
   property: string;
   oldValue: any;
@@ -31,8 +31,8 @@ export interface ComponentChange {
  * Component lifecycle operation
  */
 export type ComponentOperation =
-  | { type: 'add-component'; elementRef: ElementRef; componentClass: string; initialState?: any }
-  | { type: 'remove-component'; elementRef: ElementRef; componentClass: string; componentIndex: number };
+  | { type: 'add-component'; elementRef: ComponentRef; componentType: string; initialState?: any }
+  | { type: 'remove-component'; elementRef: ComponentRef; componentType: string; componentIndex: number };
 
 /**
  * Frame transition - captures all changes during a frame

@@ -3,14 +3,40 @@
  */
 
 import { FrameTransition } from '../persistence/transition-types';
+import type { ReadonlyVEILState, ReadonlyFrame } from '../veil/types';
 
 /**
- * Element reference that can survive serialization
+ * Execution context passed to components during frame processing
  */
-export interface ElementRef {
-  elementId: string;
-  elementPath: string[];  // ["root", "discord", "channel-handler"]
-  elementType?: string;   // Optional type hint
+export interface ExecutionContext {
+  event: SpaceEvent;
+  state: ReadonlyVEILState;
+  // Flattened metadata
+  sequence: number;
+  timestamp: string;
+
+  /**
+   * Readonly view of the current frame being processed.
+   * Provides access to frame metadata and deltas for inspection.
+   * Components CANNOT mutate the frame - use this.addOperation() instead.
+   */
+  frame: ReadonlyFrame;
+
+  /**
+   * Mutable buffer of OUTGOING events emitted during this frame.
+   * Components can inspect, modify, or cancel events emitted by earlier components
+   * before they are flushed to the main queue.
+   */
+  bufferedEvents: SpaceEvent[];
+}
+
+/**
+ * Component reference that can survive serialization
+ */
+export interface ComponentRef {
+  componentId: string;      // Component ID
+  componentPath: string[];  // Path in component tree, e.g., ["root", "discord"]
+  componentType?: string;   // Optional type hint
 }
 
 /**
@@ -32,38 +58,61 @@ export interface StreamRef {
 export type EventPriority = 'immediate' | 'high' | 'normal' | 'low';
 
 /**
- * Event propagation phases (DOM-style)
- */
-export enum EventPhase {
-  NONE = 0,
-  CAPTURING_PHASE = 1,
-  AT_TARGET = 2,
-  BUBBLING_PHASE = 3
-}
-
-/**
  * Base event class for the Space system
  */
 export interface SpaceEvent<T = unknown> {
   topic: string;  // "discord.message", "timer.expired", "agent.response"
-  source: ElementRef;
+  source: ComponentRef;
   payload: T;
   timestamp: number;
   priority?: EventPriority;  // Defaults to 'normal'
   metadata?: Record<string, any>;
   
-  // Propagation control
-  bubbles?: boolean;  // Whether event bubbles up (default: true)
-  cancelable?: boolean;  // Whether propagation can be stopped (default: true)
-  broadcast?: boolean;  // Whether event should reach all subscribers regardless of tree position (default: true)
-  
-  // Runtime state (set by the event system)
-  eventPhase?: EventPhase;
-  currentTarget?: ElementRef;
-  target?: ElementRef;
-  defaultPrevented?: boolean;
-  propagationStopped?: boolean;
-  immediatePropagationStopped?: boolean;
+  /**
+   * If true, this event will be processed immediately in a sub-cycle
+   * instead of being queued for the next frame.
+   * 
+   * WARNING: Sync events can cause infinite loops if not used carefully.
+   * The emitting component is responsible for preventing cycles.
+   */
+  sync?: boolean;
+}
+
+/**
+ * Sub-cycle tracking information for debugging
+ */
+export interface SubCycleInfo {
+  /** Nesting depth (1 = first sub-cycle, 2 = sub-cycle within sub-cycle, etc.) */
+  depth: number;
+  /** ID of the event that triggered this sub-cycle */
+  triggeringEventId: string;
+  /** Component that emitted the sync event */
+  emittingComponentId: string;
+  /** Range of deltas produced by this sub-cycle [startIndex, endIndex) */
+  deltasRange: [number, number];
+  /** Duration of sub-cycle processing in milliseconds */
+  durationMs: number;
+}
+
+/**
+ * Configuration for sub-cycle behavior
+ */
+export interface SubCycleConfig {
+  /** Maximum sub-cycle nesting depth. Default: 10. Exceeding throws error. */
+  maxDepth?: number;
+  /** Depth at which to log warnings. Default: 5. */
+  warningDepth?: number;
+  /** 
+   * Behavior when max depth is exceeded.
+   * - 'error': Throw an error (default, fail fast)
+   * - 'buffer': Force event to buffer with warning (graceful degradation)
+   */
+  onMaxDepthExceeded?: 'error' | 'buffer';
+  /**
+   * Whether sub-cycles should run all subscribed components (true, default)
+   * or only components after the emitting one in priority order (false)
+   */
+  fullCycle?: boolean;
 }
 
 /**
@@ -93,14 +142,14 @@ export interface TimeEvent extends SpaceEvent<{
 }
 
 /**
- * Element lifecycle events
+ * Component lifecycle events
  */
-export interface ElementMountEvent extends SpaceEvent<{ element: ElementRef }> {
-  topic: 'element:mount';
+export interface ComponentMountEvent extends SpaceEvent<{ component: ComponentRef }> {
+  topic: 'component:mount';
 }
 
-export interface ElementUnmountEvent extends SpaceEvent<{ element: ElementRef }> {
-  topic: 'element:unmount';
+export interface ComponentUnmountEvent extends SpaceEvent<{ component: ComponentRef }> {
+  topic: 'component:unmount';
 }
 
 /**

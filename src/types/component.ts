@@ -4,23 +4,21 @@
  * extend this base interface
  */
 
-import { Element } from '../spaces/element';
+import { Space } from '../spaces/space';
 
 /**
  * Minimal component interface - just lifecycle management
  */
 export interface Component {
   /**
-   * Mount the component to an element
-   * Called when the component is attached to the element tree
+   * Called when the component is attached to the space
    */
-  mount(element: Element): Promise<void>;
+  onMount?(): void | Promise<void>;
   
   /**
-   * Unmount the component
-   * Called when the component is removed from the element tree or element is unmounted
+   * Called when the component is removed from the space
    */
-  unmount(): Promise<void>;
+  onUnmount?(): void | Promise<void>;
   
   /**
    * Optional destroy method for cleanup beyond unmount
@@ -35,13 +33,13 @@ export interface Component {
 export interface ComponentMetadata {
   /** Unique component type identifier (e.g., 'discord-afferent', 'rate-limit-modulator') */
   componentType: string;
-  
-  /** Component class for Space registration */
-  componentClass: 'modulator' | 'afferent' | 'receptor' | 'transform' | 'effector' | 'maintainer';
-  
+
+  /** Component priority for FLEX ordering */
+  priority?: number;
+
   /** Optional version for hot-reload compatibility */
   version?: string;
-  
+
   /** Optional dependencies on other components */
   dependencies?: string[];
 }

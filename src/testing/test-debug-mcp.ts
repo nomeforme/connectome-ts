@@ -43,8 +43,13 @@ async function testDebugMCP() {
     
     // Test 6: Search frames
     console.log('\n6️⃣ Searching for "agent" in frames...');
-    const searchResults = await mcp.searchFrames({ pattern: 'agent', limit: 3 });
-    console.log('✅ Search results:', searchResults.length);
+    const searchResults = await mcp.searchFrames({ pattern: 'agent', maxResults: 3 });
+    console.log('✅ Search results:', searchResults.matches.length, 'matches found');
+    console.log('   - Total searched:', searchResults.totalSearched);
+    console.log('   - Truncated:', searchResults.truncated);
+    if (searchResults.matches.length > 0) {
+      console.log('   - First match context:', searchResults.matches[0].matchContext.substring(0, 80) + '...');
+    }
     
     // Test 7: Get metrics
     console.log('\n7️⃣ Getting performance metrics...');

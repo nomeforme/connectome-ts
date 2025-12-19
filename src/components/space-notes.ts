@@ -61,7 +61,7 @@ export class SpaceNotesComponent extends InteractiveComponent {
     this.registerAction('clear', this.clearContext.bind(this));
     
     // Subscribe to frame events to emit actions
-    this.element.subscribe('frame:start');
+    this.subscribe('frame:start');
   }
   
   private actionsEmitted = false;
@@ -126,8 +126,8 @@ export class SpaceNotesComponent extends InteractiveComponent {
     this.notes.set(noteId, note);
     
     // Emit event for other agents - much cleaner now!
-    this.element.emit(
-      createSpaceEvent('notes:added', this.element, {
+    this.emit(
+      createSpaceEvent('notes:added', this.getRef() as any, { // Cast if needed, or update createSpaceEvent signature
         noteId,
         preview: content.substring(0, 50)
       })

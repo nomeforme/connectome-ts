@@ -8,7 +8,6 @@ import {
 } from './types';
 import { FacetDelta } from '../spaces/receptor-effector-types';
 import { Space } from '../spaces/space';
-import { Element } from '../spaces/element';
 import { Component } from '../spaces/component';
 import { isForkInvariant } from '../spaces/types';
 import { getPersistenceMetadata } from '../persistence/decorators';
@@ -119,7 +118,7 @@ export class VEILStateManager {
   
   /**
    * Apply deltas directly to state without creating a frame
-   * Used for Phase 2 iterations where changes should be immediately visible
+   * Used during component execution where changes should be immediately visible
    * but we don't want to create intermediate frames in history
    */
   applyDeltasDirect(deltas: VEILOperation[]): FacetDelta[] {
@@ -221,19 +220,7 @@ export class VEILStateManager {
 
         const cloned = this.cloneFacet(operation.facet);
         this.state.facets.set(cloned.id, cloned);
-        
-        // Recursively add children to the Map (matches restoration behavior)
-        if (cloned.children && cloned.children.length > 0) {
-          const addChildren = (facet: any) => {
-            for (const child of facet.children || []) {
-              this.state.facets.set(child.id, child);
-              if (child.children && child.children.length > 0) {
-                addChildren(child);
-              }
-            }
-          };
-          addChildren(cloned);
-        }
+        // Children stay nested in cloned.children - no flattening to top-level
 
         // Update cache for state facets (clone to avoid shared references)
         if (cloned.type === 'state' && 'state' in cloned) {
@@ -285,7 +272,7 @@ export class VEILStateManager {
           );
         }
 
-        // Handle other object-like fields that should merge deeply
+        // Handle other fields - deep merge plain objects, direct assign everything else
         for (const [key, value] of Object.entries(operation.changes)) {
           if (key === 'state' || key === 'content' || value === undefined) {
             continue;
@@ -293,7 +280,11 @@ export class VEILStateManager {
 
           const existingValue = (updated as any)[key];
           if (this.isPlainObject(existingValue) && this.isPlainObject(value)) {
+            // Deep merge plain objects
             (updated as any)[key] = this.deepMergeObjects(existingValue, value as Record<string, any>);
+          } else {
+            // Direct assignment for arrays, primitives, and other non-object types
+            (updated as any)[key] = value;
           }
         }
 
@@ -492,8 +483,8 @@ export class VEILStateManager {
       };
     }
     
-    // Allow querying currentSequence + 1 (for in-progress frames during Phase 2)
-    // In this case, we return current state (frame hasn't been finalized yet)
+    // Allow querying currentSequence + 1 (for in-progress frames)
+    // Return current state since the frame hasn't been finalized yet
     if (targetSequence === this.state.currentSequence + 1) {
       return {
         sequence: targetSequence,
@@ -836,11 +827,10 @@ export class VEILStateManager {
       throw new Error(`Cannot delete ${count} frames, only ${this.state.frameHistory.length} exist`);
     }
     
-    // Phase 1: Analyze and categorize components
+    // Analyze and categorize components
     const { invariant, stateful } = this.categorizeComponents(space);
-    
-    // Phase 2: Prepare deletion
-    // Sort frames by sequence to ensure we delete the most recent ones
+
+    // Prepare deletion - sort frames by sequence to ensure we delete the most recent ones
     const sortedFrames = [...this.state.frameHistory].sort((a, b) => b.sequence - a.sequence);
     const framesToDelete = sortedFrames.slice(0, count);
     const deletedRange = {
@@ -884,28 +874,19 @@ export class VEILStateManager {
     const invariant: ComponentInfo[] = [];
     const stateful: ComponentInfo[] = [];
     
-    const walk = (element: Element, path: string[] = []) => {
-      const currentPath = [...path, element.id];
+    space.components.forEach((component, index) => {
+      const info: ComponentInfo = {
+        component,
+        index
+      };
       
-      element.components.forEach((component, index) => {
-        const info: ComponentInfo = {
-          component,
-          element,
-          path: currentPath,
-          index
-        };
-        
-        if (isForkInvariant(component)) {
-          invariant.push(info);
-        } else {
-          stateful.push(info);
-        }
-      });
-      
-      element.children.forEach(child => walk(child, currentPath));
-    };
+      if (isForkInvariant(component)) {
+        invariant.push(info);
+      } else {
+        stateful.push(info);
+      }
+    });
     
-    walk(space);
     return { invariant, stateful };
   }
   
@@ -958,7 +939,6 @@ export class VEILStateManager {
       const metadata = getPersistenceMetadata(component);
       
       const snapshot: ComponentStateSnapshot = {
-        elementPath: info.path,
         componentIndex: info.index,
         className: component.constructor.name,
         persistentProperties: {}
@@ -1105,14 +1085,8 @@ export class VEILStateManager {
     snapshots: ComponentStateSnapshot[]
   ): Promise<void> {
     for (const snapshot of snapshots) {
-      const element = this.findElementByPath(space, snapshot.elementPath);
-      if (!element) {
-        console.warn(`Cannot find element for path: ${snapshot.elementPath.join('/')}`);
-        continue;
-      }
-      
       // Component should already exist, just restore state
-      const component = element.components[snapshot.componentIndex];
+      const component = space.components[snapshot.componentIndex];
       if (!component) {
         console.warn(`Component at index ${snapshot.componentIndex} not found`);
         continue;
@@ -1131,26 +1105,11 @@ export class VEILStateManager {
     }
   }
   
-  private findElementByPath(root: Element, path: string[]): Element | null {
-    let current = root;
-    
-    // Skip root in path if present
-    const searchPath = path[0] === root.id ? path.slice(1) : path;
-    
-    for (const id of searchPath) {
-      const child = current.findChild(id);
-      if (!child) return null;
-      current = child;
-    }
-    
-    return current;
-  }
-  
   private async triggerRecoveryFrame(space: Space, previousSequence: number): Promise<void> {
     // Emit recovery complete event
     space.emit({
       topic: 'system:recovery-complete',
-      source: { elementId: 'system', elementPath: ['system'] },
+      source: { componentId: 'system', componentPath: ['system'] },
       payload: {
         reason: 'frame-deletion',
         previousSequence,
@@ -1167,8 +1126,6 @@ export class VEILStateManager {
 // Type definitions for frame deletion
 interface ComponentInfo {
   component: Component;
-  element: Element;
-  path: string[];
   index: number;
 }
 
@@ -1178,7 +1135,6 @@ interface ComponentCategorization {
 }
 
 interface ComponentStateSnapshot {
-  elementPath: string[];
   componentIndex: number;
   className: string;
   persistentProperties: Record<string, any>;

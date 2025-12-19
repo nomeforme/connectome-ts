@@ -1,49 +1,65 @@
 /**
  * ContextTransform - A Transform that renders context for agent activations
- * 
- * This is the new architecture version of FrameTrackingHUD.
- * It runs during Phase 2 of frame processing and creates ephemeral
+ *
+ * FLEX Component (constraint: priority 200) that runs during frame processing and creates
  * rendered-context facets for any pending agent activations.
  */
 
-import { BaseTransform } from '../components/base-martem';
-import { Transform, ReadonlyVEILState } from '../spaces/receptor-effector-types';
+import { Component } from '../spaces/component';
+import { ExecutionContext } from '../spaces/types';
+import { ReadonlyVEILState } from '../spaces/receptor-effector-types';
 import { Facet, hasStateAspect, VEILDelta } from '../veil/types';
 import { FrameTrackingHUD } from './frame-tracking-hud';
 import { CompressionEngine } from '../compression/types-v2';
 import { HUDConfig } from './types-v2';
 import { VEILStateManager } from '../veil/veil-state';
+import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
 
 export interface ContextTransformConfig {
   compressionEngine?: CompressionEngine;
   defaultOptions?: Partial<HUDConfig>;
+  /**
+   * Enable thinking mode prefill for chain-of-thought reasoning
+   * When enabled, prefills with <thinking> tag to encourage visible reasoning
+   * NOTE: This is NOT Anthropic's Extended Thinking API, just prefill-based CoT
+   */
+  enableThinkingMode?: boolean;
 }
 
-export class ContextTransform extends BaseTransform {
-  // Priority: Run after compression (which has priority 10)
-  // TODO [constraint-solver]: Replace with requires = ['compressed-frames']
-  priority = 100;
-  
+export class ContextTransform extends Component {
+  constraints = [priorityConstraint(ComponentPriority.TRANSFORM)];
+
   private hud: FrameTrackingHUD;
   private compressionEngine?: CompressionEngine;
   private defaultOptions?: Partial<HUDConfig>;
+  private enableThinkingMode: boolean;
   
   constructor(config: ContextTransformConfig = {}) {
     super();
     this.compressionEngine = config.compressionEngine;
     this.defaultOptions = config.defaultOptions;
+    this.enableThinkingMode = config.enableThinkingMode ?? false;
     this.hud = new FrameTrackingHUD();
   }
-  
-  process(state: ReadonlyVEILState): VEILDelta[] {
-    const deltas: VEILDelta[] = [];
-    
-    // console.log(`[ContextTransform] process() called with ${state.facets.size} facets`);
-    
+
+  /**
+   * FLEX execute method - processes frame context for agent activations
+   */
+  execute(context: ExecutionContext): void {
+    const { state } = context;
+    this.processActivations(state);
+  }
+
+  /**
+   * Process activation facets and render context for them
+   */
+  private processActivations(state: ReadonlyVEILState): void {
+    console.log(`[ContextTransform] processActivations() called with ${state.facets.size} facets`);
+
     // Find activation facets that need context
     for (const [id, facet] of state.facets) {
       if (facet.type === 'agent-activation' && hasStateAspect(facet)) {
-        // console.log(`[ContextTransform] Found agent-activation facet: ${id}`);
+        console.log(`[ContextTransform] Found agent-activation facet: ${id}`);
         const activationState = facet.state as Record<string, any>;
         // Skip if context already rendered for this activation
         const contextExists = Array.from(state.facets.values()).some(f => 
@@ -58,17 +74,19 @@ export class ContextTransform extends BaseTransform {
         }
         
         // console.log(`[ContextTransform] Rendering context for activation ${id}...`);
-        
-        // Get agent-specific options from activation
-        const agentOptions = this.buildAgentOptions(activationState);
+
+        // Get agent-specific options from activation (include top-level facet stream properties)
+        const facetStreamId = (facet as any).streamId;
+        const facetStreamType = (facet as any).streamType;
+        const agentOptions = this.buildAgentOptions(activationState, facetStreamId, facetStreamType);
         
         // Get VEILStateManager from Space
-        const space = this.element?.findSpace() as any;
+        const space = this.space;
         // console.log(`[ContextTransform] Space:`, !!space, 'hasVEILStateManager:', !!(space?.getVEILStateManager));
         
         if (!space || !space.getVEILStateManager) {
-          console.error('[ContextTransform] Cannot access VEILStateManager - element not attached to Space');
-          console.error('[ContextTransform] Element:', this.element?.id, 'Space:', space?.id);
+          console.error('[ContextTransform] Cannot access VEILStateManager - component not attached to Space');
+          console.error('[ContextTransform] Component:', this.id, 'Space:', space?.id);
           continue;
         }
         
@@ -79,7 +97,7 @@ export class ContextTransform extends BaseTransform {
         const fullState = veilStateManager.getState();
         
         // Get current frame from Space to include in rendering
-        // This is critical: during Phase 2, the current frame hasn't been finalized
+        // This is critical: during execution, the current frame hasn't been finalized
         // to frameHistory yet, so we need to explicitly include it
         const currentFrame = space?.getCurrentFrame();
         
@@ -102,11 +120,9 @@ export class ContextTransform extends BaseTransform {
         );
         
         // Store the full rendered context object in state
-        // The agent needs the message array with roles
         const contextFacetId = `context-${id}-${Date.now()}`;
-        // console.log(`[ContextTransform] Creating rendered-context facet: ${contextFacetId}`);
-        
-        deltas.push({
+
+        this.addOperation({
           type: 'addFacet',
           facet: {
             id: contextFacetId,
@@ -114,21 +130,15 @@ export class ContextTransform extends BaseTransform {
             state: {
               activationId: id,
               tokenCount: context.metadata.totalTokens,
-              context: context // Store the full RenderedContext object
+              context: context
             }
-            // Not ephemeral - valuable for debugging what context agent saw
           }
         });
-        
-        // console.log(`[ContextTransform] Rendered context with ${context.metadata.totalTokens} tokens for activation ${id}`);
       }
     }
-    
-    // console.log(`[ContextTransform] Returning ${deltas.length} deltas`);
-    return deltas;
   }
   
-  private buildAgentOptions(activationState: Record<string, any>): HUDConfig {
+  private buildAgentOptions(activationState: Record<string, any>, facetStreamId?: string, facetStreamType?: string): HUDConfig {
     const options: HUDConfig = {
       ...this.defaultOptions,
       // Agent-specific overrides from activation
@@ -136,14 +146,24 @@ export class ContextTransform extends BaseTransform {
       maxTokens: activationState.maxTokens || this.defaultOptions?.maxTokens || 4000,
       metadata: this.defaultOptions?.metadata
     };
-    
-    // Set focused stream from activation's streamRef
-    if (activationState.streamRef?.streamId) {
+
+    // Set focused stream from activation's streamRef or top-level facet properties
+    const streamId = activationState.streamRef?.streamId || facetStreamId;
+    const streamType = activationState.streamRef?.streamType || facetStreamType;
+    if (streamId) {
       options.renderContext = {
         ...this.defaultOptions?.renderContext,
-        focusedStream: activationState.streamRef.streamId
+        focusedStream: streamId,
+        ...(streamType ? { focusedStreamType: streamType } : {})
       };
     }
+    
+    // Check if thinking mode should be enabled
+    // Priority: activation state > transform config > default options
+    const thinkingEnabled = activationState.enableThinkingMode 
+      ?? this.enableThinkingMode 
+      ?? this.defaultOptions?.formatConfig?.thinking?.enabled 
+      ?? false;
     
     // Format configuration for agent output
     if (activationState.targetAgentId) {
@@ -151,7 +171,15 @@ export class ContextTransform extends BaseTransform {
         assistant: {
           prefix: '<my_turn>\n',
           suffix: '\n</my_turn>'
-        }
+        },
+        // Add thinking configuration if enabled
+        ...(thinkingEnabled && {
+          thinking: {
+            enabled: true,
+            openTag: '<thinking>\n',
+            closeTag: '\n</thinking>\n'
+          }
+        })
       };
     }
 

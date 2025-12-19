@@ -5,7 +5,7 @@
 
 import type { 
   SpaceEvent, 
-  ElementRef
+  ComponentRef
 } from '../spaces/types';
 import type {
   VEILDelta,
@@ -20,8 +20,9 @@ import type {
   StreamRewriteFacet,
   InternalStateFacet
 } from '../veil/types';
-import { Element } from '../spaces/element';
+// import { Element } from '../spaces/element'; // Removed
 import { validateFacet } from '../validation/facet-validation';
+import { ConstraintFacet, priorityConstraint } from '../spaces/constraints';
 
 // Counter for friendly sequential IDs
 let idCounter = 0;
@@ -300,40 +301,40 @@ export function createInternalStateFacet(init: InternalStateFacetInit): Internal
 /**
  * Creates a properly structured SpaceEvent
  * @param topic - The event topic
- * @param source - Either an Element instance or a string ID (will create a minimal ElementRef)
+ * @param source - Either an Element instance or a string ID (will create a minimal ComponentRef)
  * @param payload - Optional event payload
  * @returns A valid SpaceEvent
  * 
  * @example
- * // With an Element
- * const event = createSpaceEvent('user:action', myElement, { action: 'click' });
+ * // With an Object (like Component)
+ * const event = createSpaceEvent('user:action', myComponent, { action: 'click' });
  * 
  * // With just an ID
  * const event = createSpaceEvent('test:event', 'test-element-id');
  */
 export function createSpaceEvent(
   topic: string,
-  source: Element | string | ElementRef,
+  source: { id: string; getPath?: () => string[]; constructor: { name: string } } | string | ComponentRef,
   payload?: any
 ): SpaceEvent {
-  let elementRef: ElementRef;
+  let elementRef: ComponentRef;
   
   if (typeof source === 'string') {
-    // Create minimal ElementRef from string ID
+    // Create minimal ComponentRef from string ID
     elementRef = {
-      elementId: source,
-      elementPath: ['root'],
-      elementType: 'Element'
+      componentId: source,
+      componentPath: ['root'],
+      componentType: 'Component'
     };
-  } else if ('elementId' in source && 'elementPath' in source) {
-    // Already an ElementRef
-    elementRef = source;
+  } else if ('componentId' in source && 'componentPath' in source) {
+    // Already an ComponentRef
+    elementRef = source as ComponentRef;
   } else {
-    // It's an Element, extract the ref
+    // It's a Component-like object, extract the ref
     elementRef = {
-      elementId: source.id,
-      elementPath: source.getPath(),
-      elementType: source.constructor.name
+      componentId: source.id,
+      componentPath: source.getPath ? source.getPath() : ['root', source.id],
+      componentType: source.constructor.name
     };
   }
   
@@ -346,34 +347,34 @@ export function createSpaceEvent(
 }
 
 /**
- * Creates an ElementRef from various input types
- * @param elementOrId - Element instance, existing ElementRef, or string ID
- * @returns A valid ElementRef
+ * Creates an ComponentRef from various input types
+ * @param elementOrId - Component instance, existing ComponentRef, or string ID
+ * @returns A valid ComponentRef
  * 
  * @example
- * const ref = createElementRef(myElement);
- * const ref2 = createElementRef('my-element-id');
- * const ref3 = createElementRef(existingRef); // passes through
+ * const ref = createComponentRef(myComponent);
+ * const ref2 = createComponentRef('my-component-id');
+ * const ref3 = createComponentRef(existingRef); // passes through
  */
-export function createElementRef(elementOrId: Element | ElementRef | string): ElementRef {
+export function createComponentRef(elementOrId: { id: string; getPath?: () => string[]; constructor: { name: string } } | ComponentRef | string): ComponentRef {
   if (typeof elementOrId === 'string') {
     return {
-      elementId: elementOrId,
-      elementPath: ['root'],
-      elementType: 'Element'
+      componentId: elementOrId,
+      componentPath: ['root'],
+      componentType: 'Component'
     };
   }
-  
-  if ('elementId' in elementOrId && 'elementPath' in elementOrId) {
-    // Already an ElementRef
-    return elementOrId;
+
+  if ('componentId' in elementOrId && 'componentPath' in elementOrId) {
+    // Already an ComponentRef
+    return elementOrId as ComponentRef;
   }
-  
-  // It's an Element
+
+  // It's a Component
   return {
-    elementId: elementOrId.id,
-    elementPath: elementOrId.getPath(),
-    elementType: elementOrId.constructor.name
+    componentId: elementOrId.id,
+    componentPath: elementOrId.getPath ? elementOrId.getPath() : ['root', elementOrId.id],
+    componentType: elementOrId.constructor.name
   };
 }
 
@@ -397,10 +398,12 @@ export function createAgentActivation(
     id?: string;
     priority?: 'low' | 'normal' | 'high' | 'critical';
     sourceAgentId?: string;
+    streamId?: string;
+    streamType?: string;
     [key: string]: any;
   } = {}
 ): AgentActivationFacet {
-  const { id, priority = 'normal', sourceAgentId, ...extraState } = options;
+  const { id, priority = 'normal', sourceAgentId, streamId, streamType, ...extraState } = options;
 
   const facet: AgentActivationFacet = {
     id: id || friendlyId('activation'),
@@ -412,6 +415,9 @@ export function createAgentActivation(
       // Nest extra state under metadata for consistent access pattern
       ...(Object.keys(extraState).length > 0 ? { metadata: extraState } : {})
     },
+    // streamId/streamType are top-level facet properties for stream association
+    ...(streamId ? { streamId } : {}),
+    ...(streamType ? { streamType } : {}),
     ephemeral: true
   };
 
@@ -463,23 +469,37 @@ export const updateState = rewriteFacet;
 export const changeFacet = rewriteFacet;  // Backward compat
 
 /**
- * Create a component state facet for VEIL-based component persistence
+ * Create a component state facet for VEIL-based component persistence.
+ * Includes nested constraint facet for ordering.
  */
 export function createComponentStateFacet(init: {
   componentId: string;
   componentType: string;
-  componentClass: 'modulator' | 'afferent' | 'receptor' | 'transform' | 'effector' | 'maintainer';
-  elementId: string;
+  parentId?: string;
   initialState?: Record<string, any>;
+  constraints?: ConstraintFacet[];
 }): Facet {
+  const constraintsFacetId = `constraints:${init.componentId}`;
+
+  // Use provided constraints or default to priority 0
+  const constraints = init.constraints && init.constraints.length > 0
+    ? init.constraints
+    : [priorityConstraint(0, 'component-state-factory:default')];
+
+  const constraintsChildFacet = {
+    id: constraintsFacetId,
+    type: 'component-constraints',
+    state: { constraints }
+  };
+
   return {
     id: `component-state:${init.componentId}`,
     type: 'component-state',
     componentType: init.componentType,
-    componentClass: init.componentClass,
     componentId: init.componentId,
-    elementId: init.elementId,
-    state: init.initialState || {}
+    parentId: init.parentId || 'root',
+    state: init.initialState || {},
+    children: [constraintsChildFacet]
   } as any;
 }
 

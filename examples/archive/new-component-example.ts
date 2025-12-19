@@ -35,7 +35,7 @@ export class TaskTrackerComponent extends Component {
     
     // Emit event - no more manual ElementRef construction!
     this.emit(
-      createSpaceEvent('task:added', this.element, { taskId, title })
+      createSpaceEvent('task:added', this.getRef(), { taskId, title })
     );
     
     // Update UI state

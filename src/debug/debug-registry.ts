@@ -8,7 +8,24 @@ import { Space } from '../spaces/space';
 import { VEILStateManager } from '../veil/veil-state';
 import { DebugServer } from './debug-server';
 import { BasicAgent } from '../agent/basic-agent';
+import { ComponentConstraintFacet, PriorityConstraintFacet } from '../spaces/constraints';
 import * as inspector from 'inspector';
+
+/**
+ * Helper to extract priority value from a component's constraints (for grouping/ordering)
+ */
+function extractPriorityValue(component: { getConstraintFacets(): ComponentConstraintFacet[] }): number {
+  const priorityFacet = component.getConstraintFacets().find(c => c.type === 'priority') as PriorityConstraintFacet | undefined;
+  return priorityFacet?.priority ?? 0;
+}
+
+interface ComponentInfo {
+  id: string;
+  name: string;
+  constraints: ComponentConstraintFacet[];
+  enabled: boolean;
+  type?: string;  // Constructor name
+}
 
 interface DebugRegistry {
   host?: ConnectomeHost;
@@ -16,6 +33,10 @@ interface DebugRegistry {
   veilState?: VEILStateManager;
   debugServer?: DebugServer;
   agents?: Map<string, BasicAgent>;
+
+  // Helper methods
+  getComponents?: () => ComponentInfo[];
+  getComponentsByPriority?: () => Map<number, ComponentInfo[]>;
 }
 
 const registry: DebugRegistry = {};
@@ -70,7 +91,44 @@ export function registerDebugSpace(space: Space): void {
   initRegistry();
   registry.space = space;
   registry.veilState = space.getVEILStateManager();
+
+  // Add helper methods for component inspection
+  registry.getComponents = (): ComponentInfo[] => {
+    if (!registry.space) return [];
+    return registry.space.components.map(c => ({
+      id: c.id,
+      name: c.constructor.name,
+      constraints: c.getConstraintFacets(),
+      enabled: c.enabled,
+      type: c.constructor.name
+    }));
+  };
+
+  registry.getComponentsByPriority = (): Map<number, ComponentInfo[]> => {
+    const byPriority = new Map<number, ComponentInfo[]>();
+    if (!registry.space) return byPriority;
+
+    for (const c of registry.space.components) {
+      const priorityValue = extractPriorityValue(c);
+      const info: ComponentInfo = {
+        id: c.id,
+        name: c.constructor.name,
+        constraints: c.getConstraintFacets(),
+        enabled: c.enabled,
+        type: c.constructor.name
+      };
+
+      if (!byPriority.has(priorityValue)) {
+        byPriority.set(priorityValue, []);
+      }
+      byPriority.get(priorityValue)!.push(info);
+    }
+
+    return byPriority;
+  };
+
   console.log('   ✓ Space and VEILState registered');
+  console.log(`   ✓ Component inspection helpers added (${space.components.length} components)`);
 }
 
 export function registerDebugServer(debugServer: DebugServer): void {

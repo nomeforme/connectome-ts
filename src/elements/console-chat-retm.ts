@@ -1,20 +1,21 @@
 /**
- * Console Chat - RETM Architecture
- * 
- * Proper implementation using Afferent + Receptors/Effectors:
+ * Console Chat - FLEX Architecture
+ *
+ * Implementation using Afferent + FLEX Components:
  * - ConsoleAfferent: Manages readline, emits events when user types
- * - ConsoleMessageReceptor: Converts console:message events to facets + activations
- * - ConsoleSpeechEffector: Displays agent speech to console
+ * - ConsoleMessageReceptor: FLEX Component (constraint: priority 100) converts console:message events to facets + activations
+ * - ConsoleSpeechEffector: FLEX Component (constraint: priority 300) displays agent speech to console
  */
 
 import * as readline from 'readline';
 import { BaseAfferent } from '../components/base-afferent';
-import { BaseReceptor, BaseEffector } from '../components/base-martem';
-import { SpaceEvent, StreamRef } from '../spaces/types';
-import { ReadonlyVEILState, FacetDelta, EffectorResult } from '../spaces/receptor-effector-types';
+import { Component } from '../spaces/component';
+import { ExecutionContext, SpaceEvent, StreamRef } from '../spaces/types';
+import { ReadonlyVEILState, FacetDelta, FacetFilter } from '../spaces/receptor-effector-types';
 import { Facet, VEILDelta } from '../veil/types';
 import { persistable, persistent } from '../persistence/decorators';
 import { wrapFacetsAsDeltas } from '../helpers/factories';
+import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
 
 // ============================================
 // AFFERENT: Console Input Handler
@@ -99,7 +100,7 @@ export class ConsoleAfferent extends BaseAfferent<ConsoleConfig, ConsoleCommand>
         // Emit sleep command event
         this.emit({
           topic: 'agent:command',
-          source: { elementId: this.element?.id || 'console', elementPath: [] },
+          source: this.getRef(),
           timestamp: Date.now(),
           payload: { type: 'sleep', duration: command.duration }
         });
@@ -117,7 +118,7 @@ export class ConsoleAfferent extends BaseAfferent<ConsoleConfig, ConsoleCommand>
       case 'wake':
         this.emit({
           topic: 'agent:command',
-          source: { elementId: this.element?.id || 'console', elementPath: [] },
+          source: this.getRef(),
           timestamp: Date.now(),
           payload: { type: 'wake' }
         });
@@ -205,7 +206,7 @@ export class ConsoleAfferent extends BaseAfferent<ConsoleConfig, ConsoleCommand>
     // Emit console message event
     this.emit({
       topic: 'console:message',
-      source: { elementId: this.element?.id || 'console', elementPath: [] },
+      source: this.getRef(),
       timestamp: Date.now(),
       payload: {
         messageId,
@@ -235,15 +236,23 @@ export class ConsoleAfferent extends BaseAfferent<ConsoleConfig, ConsoleCommand>
 // RECEPTOR: Console Message → Facets
 // ============================================
 
-export class ConsoleMessageReceptor extends BaseReceptor {
+/**
+ * ConsoleMessageReceptor - FLEX Component (constraint: priority 100 - Receptor level)
+ * Converts console:message events to facets + activations
+ */
+export class ConsoleMessageReceptor extends Component {
+  constraints = [priorityConstraint(ComponentPriority.RECEPTOR)];
   topics = ['console:message'];
-  
-  transform(event: SpaceEvent, state: ReadonlyVEILState): VEILDelta[] {
+
+  execute(context: ExecutionContext): void {
+    const { event, state } = context;
+    if (!event || event.topic !== 'console:message') return;
+
     const payload = event.payload as any;
     const { messageId, content, streamId, streamType } = payload;
-    
+
     const facets: Facet[] = [];
-    
+
     // Create message event facet (eventType must be in state!)
     facets.push({
       id: messageId,
@@ -261,7 +270,7 @@ export class ConsoleMessageReceptor extends BaseReceptor {
         source: 'user'
       }
     });
-    
+
     // Create agent activation
     facets.push({
       id: `activation-${messageId}`,
@@ -283,8 +292,10 @@ export class ConsoleMessageReceptor extends BaseReceptor {
       },
       ephemeral: true
     });
-    
-    return wrapFacetsAsDeltas(facets);
+
+    for (const delta of wrapFacetsAsDeltas(facets)) {
+      this.addOperation(delta);
+    }
   }
 }
 
@@ -292,33 +303,51 @@ export class ConsoleMessageReceptor extends BaseReceptor {
 // EFFECTOR: Agent Speech → Console Output
 // ============================================
 
-export class ConsoleSpeechEffector extends BaseEffector {
-  facetFilters = [{ type: 'speech' }];
-  
+/**
+ * ConsoleSpeechEffector - FLEX Component (constraint: priority 300 - Effector level)
+ * Displays agent speech to console
+ */
+export class ConsoleSpeechEffector extends Component {
+  constraints = [priorityConstraint(ComponentPriority.EFFECTOR)];
+  facetFilters: FacetFilter[] = [{ type: 'speech' }];
+
   constructor(private consoleAfferent?: ConsoleAfferent) {
     super();
   }
-  
-  async process(changes: FacetDelta[], state: ReadonlyVEILState): Promise<EffectorResult> {
-    const events: SpaceEvent[] = [];
-    
+
+  execute(context: ExecutionContext): void {
+    const { frame, state } = context;
+    if (!frame) return;
+
+    // Build changes from frame deltas
+    const changes: FacetDelta[] = [];
+    if (frame.deltas) {
+      for (const delta of frame.deltas) {
+        if (delta.type === 'addFacet' && delta.facet.type === 'speech') {
+          changes.push({ type: 'added', facet: delta.facet });
+        }
+      }
+    }
+
+    if (changes.length === 0) return;
+
     for (const change of changes) {
       if (change.type !== 'added' || change.facet.type !== 'speech') continue;
-      
+
       const speech = change.facet as any;
       const streamId = speech.streamId;
-      
+
       // Check if this is for console
       if (!streamId || !streamId.startsWith('console:')) continue;
-      
+
       // No need to track displayedSpeechIds - change.type === 'added' ensures
       // we only process each speech facet once (when it's first created)
-      
+
       const agentName = speech.agentName || 'Agent';
       const content = speech.content;
-      
+
       const output = `\n[${agentName}]: ${content}`;
-      
+
       // Display using afferent if available, otherwise just console.log
       if (this.consoleAfferent) {
         this.consoleAfferent.displayOutput(output);
@@ -326,8 +355,6 @@ export class ConsoleSpeechEffector extends BaseEffector {
         console.log(output);
       }
     }
-    
-    return { events };
   }
 }
 

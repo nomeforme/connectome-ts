@@ -1,34 +1,62 @@
 /**
- * Component that integrates an AgentInterface with the Space/Element system
+ * AgentComponent - FLEX component that manages agent lifecycle and executes agent cycles
+ *
+ * Consolidates the previous AgentComponent (container/lifecycle) and AgentEffector (execution)
+ * into a single FLEX component with constraint: priority 300 (Effector level).
+ *
+ * Watches for agent-activation + rendered-context facets and runs the agent to produce
+ * speech/action/thought facets.
  */
 
-import { VEILComponent } from '../components/base-components';
-import { SpaceEvent, FrameEndEvent, AgentResponseEvent } from '../spaces/types';
-import { AgentInterface, AgentCommand, AgentConfig } from './types';
-import { Space } from '../spaces/space';
-import { Facet, AgentLifecycleFacet, hasStateAspect } from '../veil/types';
+import { Component } from '../spaces/component';
+import { SpaceEvent, ExecutionContext } from '../spaces/types';
+import { AgentInterface, AgentCommand, AgentConfig, AgentState } from './types';
+import {
+  Facet,
+  AgentLifecycleFacet,
+  StreamRef,
+  hasStateAspect,
+  hasAgentGeneratedAspect,
+  hasContentAspect,
+  hasStreamAspect
+} from '../veil/types';
 import { persistable, persistent } from '../persistence/decorators';
 import { reference, RestorableComponent } from '../host/decorators';
 import { LLMProvider } from '../llm/llm-interface';
 import { VEILStateManager } from '../veil/veil-state';
 import { BasicAgent } from './basic-agent';
+import { FacetDelta, ReadonlyVEILState, FacetFilter } from '../spaces/receptor-effector-types';
+import { getGlobalTracer, TraceStorage } from '../tracing';
+import { RenderedContext } from '../hud/types-v2';
+import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
+import { ActivationStreamPayload } from './response-handler';
+import { StreamAbortRegistry } from './stream-abort-registry';
 
 @persistable(1)
-export class AgentComponent extends VEILComponent implements RestorableComponent {
+export class AgentComponent extends Component implements RestorableComponent {
+  constraints = [priorityConstraint(ComponentPriority.EFFECTOR)];
+
+  // Watch for activation facets and rendered contexts
+  // (action-result handling moved to ActionResultProcessor at MAINTAINER priority)
+  facetFilters: FacetFilter[] = [
+    { type: 'agent-activation' },
+    { type: 'rendered-context' }
+  ];
+
   private agent?: AgentInterface;
   private agentRegistered = false;
-  
+  private processingActivations = new Set<string>();
+  private tracer?: TraceStorage;
+
   // Persist the agent configuration
   @persistent() private agentConfig?: AgentConfig;
-  
+
   // References that will be injected by the Host
   @reference('veilState') private veilState?: VEILStateManager;
   @reference('llmProvider') private llmProvider?: LLMProvider;
-  
+
   constructor(agentOrConfig?: AgentInterface | { agentConfig: AgentConfig }) {
     super();
-
-    console.log('[AgentComponent] constructor called with:', agentOrConfig ? Object.keys(agentOrConfig) : 'undefined');
 
     // Handle both direct agent and config object (from declarative creation)
     if (agentOrConfig) {
@@ -36,11 +64,9 @@ export class AgentComponent extends VEILComponent implements RestorableComponent
       if ('agentConfig' in agentOrConfig && !('runCycle' in agentOrConfig)) {
         // It's a config object, store the agent config
         this.agentConfig = (agentOrConfig as { agentConfig: AgentConfig }).agentConfig;
-        console.log('[AgentComponent] Stored agentConfig:', this.agentConfig?.name);
       } else {
         // It's an actual agent object
         this.agent = agentOrConfig as AgentInterface;
-        console.log('[AgentComponent] Stored agent directly');
         // Save agent config for restoration
         if ('config' in agentOrConfig) {
           this.agentConfig = (agentOrConfig as any).config;
@@ -48,7 +74,11 @@ export class AgentComponent extends VEILComponent implements RestorableComponent
       }
     }
   }
-  
+
+  get agentInstance(): AgentInterface | undefined {
+    return this.agent;
+  }
+
   setAgent(agent: AgentInterface) {
     this.agent = agent;
     // Save agent config for restoration
@@ -56,55 +86,37 @@ export class AgentComponent extends VEILComponent implements RestorableComponent
       this.agentConfig = (agent as any).config;
     }
   }
-  
+
   /**
    * Called by Host after all references are resolved
    */
   async onReferencesResolved(): Promise<void> {
-    console.log(`[AgentComponent ${this.element?.id}] onReferencesResolved - config: ${!!this.agentConfig}, agent: ${!!this.agent}, llm: ${!!this.llmProvider}, veil: ${!!this.veilState}`);
-
     // If we have config but no agent, recreate it
     if (this.agentConfig && !this.agent && this.llmProvider && this.veilState) {
-      console.log('✨ Recreating agent from config:', this.agentConfig.name || 'unnamed');
-
       // Check if there's a custom agent factory registered
-      const space = this.element?.space;
+      const space = this.space;
       const agentFactory = (space as any)?.getReference?.('agentFactory');
 
       if (agentFactory && typeof agentFactory === 'function') {
         // Use custom factory
         this.agent = agentFactory(this.agentConfig, this.llmProvider, this.veilState);
-        console.log('[AgentComponent] Created agent via custom factory');
       } else {
         // Default to BasicAgent
         this.agent = new BasicAgent(this.agentConfig, this.llmProvider, this.veilState);
-        console.log('[AgentComponent] Created BasicAgent, has agent now:', !!this.agent);
       }
 
       // Re-enable auto action registration if it was enabled
       if ((this.agentConfig as any).autoActionRegistration) {
         (this.agent as BasicAgent).enableAutoActionRegistration();
       }
-    } else {
-      console.log('[AgentComponent] NOT creating agent. Reasons:', {
-        hasConfig: !!this.agentConfig,
-        hasAgent: !!this.agent,
-        hasLLM: !!this.llmProvider,
-        hasVeil: !!this.veilState
-      });
     }
-
-    // Agent registration will happen in onFirstFrame()
   }
 
   onMount(): void {
-    // Subscribe to relevant events
-    this.element.subscribe('frame:start');
-    this.element.subscribe('frame:end');
-    this.element.subscribe('agent:command');
-    this.element.subscribe('agent:pending-activation');
+    this.tracer = getGlobalTracer();
 
-    // Agent registration will happen on first frame:start
+    // Subscribe to agent commands
+    this.subscribe('agent:command');
   }
 
   onFirstFrame(): void {
@@ -112,8 +124,11 @@ export class AgentComponent extends VEILComponent implements RestorableComponent
     if (!this.agentRegistered && this.agent && this.veilState) {
       this.registerAgent();
     }
+    // Note: System prompt emission is the responsibility of application-level components
+    // (e.g. DiscordInfrastructureTransform) which should emit ambient facets as needed.
+    // This keeps the framework layer agnostic about how system prompts are configured.
   }
-  
+
   onUnmount(): void {
     // Unregister agent from VEIL state
     if (this.veilState) {
@@ -123,14 +138,376 @@ export class AgentComponent extends VEILComponent implements RestorableComponent
       });
     }
   }
-  
+
+  /**
+   * FLEX execute method - processes frame context for agent activations
+   */
+  execute(context: ExecutionContext): void {
+    const { state, frame } = context;
+
+    // Register agent if not yet done (backup for onFirstFrame)
+    if (!this.agentRegistered && this.agent && this.veilState) {
+      this.registerAgent();
+    }
+
+    // Build changes from frame deltas
+    const changes: FacetDelta[] = [];
+    if (frame && frame.deltas) {
+      for (const delta of frame.deltas) {
+        if (delta.type === 'addFacet') {
+          changes.push({ type: 'added', facet: delta.facet });
+        }
+      }
+    }
+
+    if (changes.length === 0) return;
+
+    // Process asynchronously (fire and forget for effector pattern)
+    this.processActivations(changes, state);
+  }
+
+  /**
+   * Handle events (for agent commands)
+   */
+  async handleEvent(event: SpaceEvent): Promise<void> {
+    await super.handleEvent(event);
+
+    if (event.topic === 'agent:command' && this.agent) {
+      this.handleAgentCommand(event.payload as AgentCommand);
+    }
+  }
+
+  /**
+   * Process facet changes - look for activations with rendered contexts
+   */
+  private async processActivations(changes: FacetDelta[], state: ReadonlyVEILState): Promise<void> {
+    if (!this.agent) return;
+
+    for (const change of changes) {
+      if (change.type !== 'added') continue;
+
+      if (change.facet.type === 'agent-activation') {
+        const activationId = change.facet.id;
+        const activationState = hasStateAspect(change.facet)
+          ? (change.facet.state as Record<string, any>)
+          : {};
+
+        if (this.processingActivations.has(activationId)) continue;
+
+        // Check if this activation targets this agent
+        const targetAgentId = activationState.targetAgentId as string | undefined;
+        const targetAgent = activationState.targetAgent ?? activationState.targetAgentName;
+        const agentName = this.agentConfig?.name || this.id;
+
+        // Skip if targeted to a different agent
+        if (targetAgentId && targetAgentId !== this.id) continue;
+        if (targetAgent && targetAgent !== this.id && targetAgent !== agentName) continue;
+
+        // Include top-level facet properties (like streamId, streamType) that aren't in state
+        const facetStreamId = (change.facet as any).streamId;
+        const facetStreamType = (change.facet as any).streamType;
+        const flattenedActivation = {
+          ...activationState,
+          ...(activationState.metadata || {}),
+          // Top-level stream properties take precedence (set by createAgentActivation)
+          ...(facetStreamId ? { streamId: facetStreamId } : {}),
+          ...(facetStreamType ? { streamType: facetStreamType } : {})
+        };
+
+        const veilState = state as any;
+        if (!this.agent.shouldActivate(flattenedActivation, veilState)) {
+          continue;
+        }
+
+        // Look for corresponding rendered context
+        const contextFacet = Array.from(state.facets.values()).find(f =>
+          f.type === 'rendered-context' &&
+          hasStateAspect(f) &&
+          (f.state as Record<string, any>).activationId === activationId
+        );
+
+        if (!contextFacet || !hasStateAspect(contextFacet)) {
+          continue;
+        }
+
+        this.processingActivations.add(activationId);
+
+        const streamRef = flattenedActivation.streamRef as StreamRef | undefined;
+        const streamId = streamRef?.streamId ?? (flattenedActivation.streamId as string | undefined) ?? 'default';
+
+        const contextState = contextFacet.state as { context: RenderedContext };
+        const context = contextState.context;
+
+        this.runAgentCycleBackground(context, streamRef, activationId, streamId);
+      }
+      // Note: action-result handling moved to ActionResultProcessor (MAINTAINER priority)
+    }
+  }
+
+  /**
+   * Runs the agent cycle in the background (fire-and-forget).
+   * Uses streaming mode - emits activation:stream events for each chunk.
+   * ResponseHandler accumulates chunks and emits activation:completed when done.
+   * The ActivationCompletedReceptor then parses and creates all facets in a single frame.
+   */
+  private runAgentCycleBackground(
+    context: RenderedContext,
+    streamRef: StreamRef | undefined,
+    activationId: string,
+    streamId: string
+  ): void {
+    (async () => {
+      try {
+        // Check if agent supports streaming
+        const agent = this.agent as BasicAgent;
+        if (agent && typeof agent.runCycleStreaming === 'function') {
+          // Use streaming mode
+          await this.runAgentCycleStreaming(context, streamRef, activationId, streamId);
+        } else {
+          // Fallback to non-streaming mode
+          await this.runAgentCycleNonStreaming(context, streamRef, activationId, streamId);
+        }
+      } catch (error) {
+        console.error('[AgentComponent] Agent cycle error:', error);
+
+        // Emit activation:stream with error (done=true triggers ResponseHandler)
+        const errorPayload: ActivationStreamPayload = {
+          activationId,
+          agentId: this.id,
+          agentName: this.agentConfig?.name,
+          streamId,
+          streamType: streamRef?.streamType,
+          chunk: '',
+          done: true,
+          streamSequence: 0
+        };
+
+        this.emit({
+          topic: 'activation:stream',
+          timestamp: Date.now(),
+          payload: errorPayload
+        });
+
+        // Also emit error event for error handling
+        this.emit({
+          topic: 'activation:completed',
+          timestamp: Date.now(),
+          payload: {
+            activationId,
+            agentId: this.id,
+            agentName: this.agentConfig?.name,
+            streamId,
+            rawOutput: '',
+            success: false,
+            error: String(error)
+          }
+        });
+      } finally {
+        this.processingActivations.delete(activationId);
+      }
+    })();
+  }
+
+  /**
+   * Streaming agent cycle - emits activation:stream events for each chunk
+   *
+   * Registers with StreamAbortRegistry to allow ResponseHandler to interrupt
+   * the stream when a tool call is detected mid-stream (sync tool mode).
+   */
+  private async runAgentCycleStreaming(
+    context: RenderedContext,
+    streamRef: StreamRef | undefined,
+    activationId: string,
+    streamId: string
+  ): Promise<void> {
+    const agent = this.agent as BasicAgent;
+    const effectiveStreamRef = streamRef || (streamId ? { streamId } as StreamRef : undefined);
+
+    // Register abort controller for this activation
+    const abortSignal = StreamAbortRegistry.register(activationId, this.id);
+
+    let streamSequence = 0;
+    let aborted = false;
+
+    try {
+      for await (const streamChunk of agent.runCycleStreaming(context, effectiveStreamRef, abortSignal)) {
+        // Check if we've been aborted (tool call detected)
+        if (abortSignal.aborted) {
+          console.log(`[AgentComponent] Stream ${activationId} aborted by tool detection`);
+          aborted = true;
+          break;
+        }
+
+        const payload: ActivationStreamPayload = {
+          activationId,
+          agentId: this.id,
+          agentName: this.agentConfig?.name,
+          streamId,
+          streamType: streamRef?.streamType,
+          chunk: streamChunk.chunk,
+          done: streamChunk.done,
+          streamSequence: streamSequence++,
+          tokensUsed: streamChunk.tokensUsed,
+          modelId: streamChunk.modelId,
+          tools: (this.agent as any)?.tools
+        };
+
+        this.emit({
+          topic: 'activation:stream',
+          timestamp: Date.now(),
+          payload
+        });
+
+        // Break if this was the final chunk
+        if (streamChunk.done) break;
+      }
+
+      // If aborted, emit a final done event so ResponseHandler can clean up
+      if (aborted) {
+        this.emit({
+          topic: 'activation:stream',
+          timestamp: Date.now(),
+          payload: {
+            activationId,
+            agentId: this.id,
+            agentName: this.agentConfig?.name,
+            streamId,
+            streamType: streamRef?.streamType,
+            chunk: '',
+            done: true,
+            streamSequence: streamSequence++
+          } as ActivationStreamPayload
+        });
+      }
+    } finally {
+      // Clean up the abort registration
+      StreamAbortRegistry.unregister(activationId);
+    }
+  }
+
+  /**
+   * Non-streaming fallback - for agents that don't support streaming
+   */
+  private async runAgentCycleNonStreaming(
+    context: RenderedContext,
+    streamRef: StreamRef | undefined,
+    activationId: string,
+    streamId: string
+  ): Promise<void> {
+    const response = await this.runAgentCycle(context, streamRef, activationId, streamId);
+
+    // Emit as a single stream event with done=true
+    // Note: For non-streaming, the entire output is in the chunk
+    const payload: ActivationStreamPayload = {
+      activationId,
+      agentId: this.id,
+      agentName: this.agentConfig?.name,
+      streamId,
+      streamType: streamRef?.streamType,
+      chunk: response.rawOutput,
+      done: true,
+      streamSequence: 0,
+      tokensUsed: response.llmMetadata?.tokensUsed,
+      tools: (this.agent as any)?.tools
+    };
+
+    this.emit({
+      topic: 'activation:stream',
+      timestamp: Date.now(),
+      payload
+    });
+  }
+
+  /**
+   * Raw output from agent cycle (for activation:completed event)
+   */
+  private async runAgentCycle(
+    context: RenderedContext,
+    streamRef?: StreamRef,
+    activationId?: string,
+    streamId?: string
+  ): Promise<{
+    rawOutput: string;
+    llmMetadata?: { tokensUsed?: number; provider?: string; timestamp?: string };
+    events: SpaceEvent[];
+  }> {
+    if (!this.agent) {
+      console.error('[AgentComponent] Agent not available for runCycle');
+      return { rawOutput: '', events: [] };
+    }
+
+    // Build effective streamRef with streamId if provided
+    const effectiveStreamRef = streamRef || (streamId ? { streamId } as StreamRef : undefined);
+
+    // Run the agent's cycle with the full context
+    const outgoingFrame = await this.agent.runCycle(context, effectiveStreamRef);
+
+    // Extract raw completion from frame (attached by BasicAgent)
+    const rawCompletion = (outgoingFrame as any).rawCompletion as {
+      content: string;
+      tokensUsed?: number;
+      provider?: string;
+      timestamp?: string;
+    } | undefined;
+
+    if (!rawCompletion?.content) {
+      console.warn('[AgentComponent] No raw completion found in agent response');
+      return { rawOutput: '', events: outgoingFrame.events || [] };
+    }
+
+    return {
+      rawOutput: rawCompletion.content,
+      llmMetadata: {
+        tokensUsed: rawCompletion.tokensUsed,
+        provider: rawCompletion.provider,
+        timestamp: rawCompletion.timestamp
+      },
+      events: outgoingFrame.events || []
+    };
+  }
+
+  private prepareAgentFacet(facet: Facet, streamRef?: StreamRef): Facet {
+    const prepared = { ...facet } as Facet;
+    // Effective streamId: prefer streamRef.streamId, fall back to facet's own streamId
+    const effectiveStreamId = streamRef?.streamId || (facet as any).streamId;
+
+    if (hasAgentGeneratedAspect(prepared) && !prepared.agentId) {
+      prepared.agentId = this.id;
+    }
+
+    if ((prepared.type === 'speech' || prepared.type === 'thought' || prepared.type === 'action') && !hasAgentGeneratedAspect(prepared)) {
+      (prepared as Facet & { agentId: string }).agentId = this.id;
+      if (effectiveStreamId) {
+        (prepared as Facet & { streamId: string }).streamId = effectiveStreamId;
+      }
+    }
+
+    if (effectiveStreamId && hasStreamAspect(prepared)) {
+      prepared.streamId = prepared.streamId || effectiveStreamId;
+    }
+
+    if (prepared.type === 'speech' || prepared.type === 'thought') {
+      if (!hasContentAspect(prepared)) {
+        (prepared as Facet & { content: string }).content = '';
+      }
+      if (!prepared.streamId && effectiveStreamId) {
+        (prepared as Facet & { streamId: string }).streamId = effectiveStreamId;
+      }
+    }
+
+    if (prepared.type === 'action' && hasStateAspect(prepared) && effectiveStreamId) {
+      prepared.streamId = prepared.streamId || effectiveStreamId;
+    }
+
+    return prepared;
+  }
+
   private registerAgent(): void {
     if (this.agentRegistered) return;
 
-    console.log(`[AgentComponent ${this.element.id}] Registering agent...`);
     const agentInfo = {
-      id: this.element.id,
-      name: this.agentConfig?.name || this.element.name || 'Agent',
+      id: this.id,
+      name: this.agentConfig?.name || this.id || 'Agent',
       type: 'assistant',
       capabilities: ['chat', 'code', 'search'],
       metadata: {
@@ -148,123 +525,16 @@ export class AgentComponent extends VEILComponent implements RestorableComponent
     this.agentRegistered = true;
   }
 
-  async handleEvent(event: SpaceEvent): Promise<void> {
-    // IMPORTANT: Call parent handleEvent to enable onFirstFrame() lifecycle
-    await super.handleEvent(event);
-
-    switch (event.topic) {
-      case 'frame:start':
-        // Register agent on first frame (agent might be created in onReferencesResolved)
-        console.log(`[AgentComponent ${this.element.id}] frame:start - agent: ${!!this.agent}, veilState: ${!!this.veilState}, registered: ${this.agentRegistered}`);
-        if (!this.agentRegistered && this.agent && this.veilState) {
-          this.registerAgent();
-        }
-        break;
-
-      case 'frame:end':
-        if (this.agent) {
-          await this.handleFrameEnd(event as FrameEndEvent);
-        }
-        break;
-
-      case 'agent:command':
-        if (this.agent) {
-          this.handleAgentCommand(event.payload as AgentCommand);
-        }
-        break;
-    }
-  }
-  
-  private async handleFrameEnd(event: FrameEndEvent): Promise<void> {
-    // Handle agent processing directly in the component
-    const space = this.element.findSpace() as any;
-    if (!space) return;
-    
-    const frame = space.getCurrentFrame();
-    if (!frame || !event.payload.hasOperations) return;
-    
-    // Check if this agent should handle this frame - look for activation facets
-    const activationOps = frame.deltas.filter((op: any) => 
-      op.type === 'addFacet' && op.facet?.type === 'agent-activation'
-    );
-    if (activationOps.length === 0) return;
-
-    // Check if any activation targets this agent (or no target specified)
-    const shouldHandle = activationOps.some((op: any) => {
-      const facet = op.facet as Facet | undefined;
-      if (!facet || !hasStateAspect(facet)) {
-        return false;
-      }
-      const activationState = facet.state as Record<string, any>;
-      const targetAgent = activationState.targetAgent ?? activationState.targetAgentName;
-      const targetAgentId = activationState.targetAgentId as string | undefined;
-      
-      // Check by ID first, then by name
-      if (targetAgentId) {
-        return targetAgentId === this.element.id;
-      }
-      
-      // If no ID specified, check by name (either element name or agent name from config)
-      const agentName = this.agentConfig?.name || this.element.name;
-      return !targetAgent || targetAgent === this.element.id || targetAgent === this.element.name || targetAgent === agentName;
-    });
-    
-    if (!shouldHandle) return;
-    
-    if (!this.agent) {
-      console.warn('[AgentComponent] No agent set');
-      return;
-    }
-    
-    // Let the agent process the frame
-    const veilState = space.getVEILState();
-    const response = await this.agent.onFrameComplete(frame, veilState.getState());
-    
-    // If agent generated a response, process it synchronously
-    // This must happen within the current frame to maintain sequence order
-    if (response && space) {
-      // Extract rendered context if attached
-      const renderedContext = (response as any).renderedContext;
-      delete (response as any).renderedContext; // Clean up before passing
-      
-      // Extract raw completion if attached
-      const rawCompletion = (response as any).rawCompletion;
-      delete (response as any).rawCompletion; // Clean up before passing
-      
-      // Use distributeEvent directly to maintain proper event flow
-      // while avoiding the queue (which would defer to next frame)
-      await (space as any).distributeEvent({
-        topic: 'agent:frame-ready',
-        source: this.element.getRef(),
-        payload: {
-          frame: response,
-          agentId: this.element.id,
-          agentName: this.element.name,
-          renderedContext, // Include rendered context for debug
-          rawCompletion // Include raw completion for debug
-        },
-        priority: 'immediate',
-        timestamp: Date.now()
-      });
-    }
-    
-    // Log state for debugging
-    const state = this.agent.getState();
-    if (state.sleeping) {
-      console.log(`[Agent ${this.element.name}] Currently sleeping, may have ignored low-priority activations`);
-    }
-  }
-
   private createAgentLifecycleFacet(
     operation: AgentLifecycleFacet['state']['operation'],
     agentInfo?: AgentLifecycleFacet['state']['agentInfo']
   ): AgentLifecycleFacet {
     return {
-      id: `agent-lifecycle-${this.element?.id || 'unknown'}-${Date.now()}`,
+      id: `agent-lifecycle-${this.id || 'unknown'}-${Date.now()}`,
       type: 'agent-lifecycle',
       state: {
         operation,
-        agentId: this.element?.id || 'unknown',
+        agentId: this.id || 'unknown',
         agentInfo
       },
       ephemeral: true
@@ -276,27 +546,33 @@ export class AgentComponent extends VEILComponent implements RestorableComponent
       console.warn('[AgentComponent] No agent set');
       return;
     }
-    
+
     this.agent.handleCommand(command);
-    
-    // Log state changes
-    const state = this.agent.getState();
-    console.log('[Agent] State updated:', {
-      sleeping: state.sleeping,
-      ignoringSources: Array.from(state.ignoringSources),
-      attentionThreshold: state.attentionThreshold
-    });
-    
-    // If waking up, check for activation facets in state
+
+    // If waking up, emit wake event
     if (command.type === 'wake') {
-      // Activation facets persist in state, so we just need to trigger processing
-      this.element.emit({
+      this.emit({
         topic: 'agent:wake',
-        source: this.element.getRef(),
         payload: {},
         timestamp: Date.now()
       });
     }
   }
-  
+
+  // Public API for agent state
+  handleCommand(command: AgentCommand): void {
+    this.handleAgentCommand(command);
+  }
+
+  getState(): AgentState {
+    if (!this.agent) {
+      return { sleeping: false, ignoringSources: new Set(), attentionThreshold: 0 };
+    }
+    return this.agent.getState();
+  }
 }
+
+/**
+ * @deprecated Use AgentComponent instead - AgentEffector has been consolidated into AgentComponent
+ */
+export const AgentEffector = AgentComponent;

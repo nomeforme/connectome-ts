@@ -125,19 +125,34 @@ export class FileStorageAdapter implements StorageAdapter {
       
       console.log(`[FileStorageAdapter] Snapshot ${id} basic structure:`, {
         hasElementTree: !!snapshot.elementTree,
+        hasSpace: !!snapshot.space,
         hasVeilState: !!snapshot.veilState,
         sequence: snapshot.sequence,
         frameCount: snapshot.veilState?.frames?.length || 0
       });
-      
-      if (!snapshot.elementTree || typeof snapshot.elementTree !== 'object') {
-        console.error(`[FileStorageAdapter] Invalid snapshot ${id}: missing or invalid elementTree`);
+
+      // Support both legacy (elementTree) and new (space) formats
+      const spaceData = snapshot.space || snapshot.elementTree;
+
+      if (!spaceData || typeof spaceData !== 'object') {
+        console.error(`[FileStorageAdapter] Invalid snapshot ${id}: missing or invalid space/elementTree`);
         return null;
       }
-      
-      if (!Array.isArray(snapshot.elementTree.children)) {
-        console.error(`[FileStorageAdapter] Invalid snapshot ${id}: elementTree.children is not an array`);
+
+      // Validate structure (both formats should have components array)
+      const componentsField = spaceData.components || spaceData.children;
+      if (!Array.isArray(componentsField)) {
+        console.error(`[FileStorageAdapter] Invalid snapshot ${id}: space/elementTree missing components/children array`);
         return null;
+      }
+
+      // Normalize to new format if loading legacy snapshot
+      if (snapshot.elementTree && !snapshot.space) {
+        console.warn(`⚠️  [FileStorageAdapter] DEPRECATED: Snapshot ${id} uses legacy 'elementTree' format`);
+        console.warn(`    The 'elementTree' field is deprecated in favor of 'space'.`);
+        console.warn(`    This snapshot will be automatically migrated on next save.`);
+        snapshot.space = snapshot.elementTree;
+        // Keep elementTree for backward compatibility during transition
       }
       
       // Load frames from buckets if using new format

@@ -43,10 +43,10 @@ class MyComponent extends Component {
   notifyOthers(message: string) {
     // Before: Had to build ElementRef manually, know exact structure
     // After: Factory function handles it
-    const event = createSpaceEvent('my-component:notification', this.element, {
+    const event = createSpaceEvent('my-component:notification', this.getRef(), {
       message
     });
-    this.element.emit(event);
+    this.emit(event);
   }
   
   // Activating agents is clear

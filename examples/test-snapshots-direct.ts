@@ -16,7 +16,6 @@ import {
   Element,
   createEventFacet
 } from '../src';
-import { BaseReceptor } from '../src/components/base-martem';
 import { SpaceEvent, ReadonlyVEILState } from '../src/spaces/receptor-effector-types';
 import { VEILDelta } from '../src/veil/types';
 

@@ -5,13 +5,12 @@
 import { VEILStateManager } from '../veil/veil-state';
 import { VEILState, Facet, StreamInfo } from '../veil/types';
 import { Space } from '../spaces/space';
-import { Element } from '../spaces/element';
 import { Component } from '../spaces/component';
 import {
   SerializedVEILState,
-  SerializedElement,
   SerializedComponent,
-  PersistenceSnapshot
+  PersistenceSnapshot,
+  SerializedSpace
 } from './types';
 import { deserializeValue } from './serialization';
 import { ComponentRegistry } from './component-registry';
@@ -39,23 +38,19 @@ export async function restoreVEILState(
     currentStateCache: new Map()  // Will be rebuilt from facets
   };
   
-  // Helper to recursively add facet and all its children to the Map
-  const addFacetAndChildren = (facet: any, depth = 0) => {
+  // Add facet to the Map - children stay nested, not flattened to top-level
+  // This prevents orphaned children when parent facets are removed, and
+  // eliminates data duplication/inconsistency between nested and flattened copies
+  const addFacet = (facet: any) => {
     newState.facets.set(facet.id, facet);
-    if (facet.children && facet.children.length > 0) {
-      console.log(`[Restoration] Facet ${facet.id} has ${facet.children.length} children at depth ${depth}`);
-      for (const child of facet.children) {
-        console.log(`[Restoration]   → Adding child: ${child.id} (type: ${child.type})`);
-        addFacetAndChildren(child, depth + 1);
-      }
-    }
+    // Children remain nested in facet.children - no flattening
   };
   
   // Restore facets
   for (const [id, facetData] of serialized.facets) {
     const facet = deserializeFacet(facetData);
     if (facet) {
-      addFacetAndChildren(facet);
+      addFacet(facet);
     }
   }
   
@@ -110,16 +105,54 @@ function deserializeFacet(data: any): Facet | null {
           base.transitionRenderers = data.transitionRenderers;
         }
         break;
-        
+
+      case 'component-state':
+        if (data.componentType) base.componentType = data.componentType;
+        if (data.componentId) base.componentId = data.componentId;
+        if (data.parentId) base.parentId = data.parentId;
+        break;
+
       case 'tool':
         if (data.toolName) base.toolName = data.toolName;
         if (data.parameters) base.parameters = deserializeValue(data.parameters);
         break;
-        
+
       case 'action':
         if (data.actionTarget) base.actionTarget = data.actionTarget;
         if (data.actionName) base.actionName = data.actionName;
         if (data.parameters) base.parameters = deserializeValue(data.parameters);
+        break;
+
+      case 'script-execution':
+        // Restore script execution fields
+        if (data.code) base.code = data.code;
+        if (data.timeoutMs !== undefined) base.timeoutMs = data.timeoutMs;
+        if (data.parentScriptId !== undefined) base.parentScriptId = data.parentScriptId;
+        if (data.blockedOn) base.blockedOn = data.blockedOn;
+
+        // Mark running/blocked scripts as interrupted on restore
+        // Scripts cannot be resumed after restart since Lua state is lost
+        if (data.status === 'running' || data.status === 'blocked' || data.status === 'pending') {
+          base.status = 'error';
+          console.log(`[Restoration] Marking script ${data.id} as interrupted (was ${data.status})`);
+        } else {
+          base.status = data.status;
+        }
+        break;
+
+      case 'tool-call':
+        // Restore tool call fields
+        if (data.parentScriptId) base.parentScriptId = data.parentScriptId;
+        if (data.toolName) base.toolName = data.toolName;
+        if (data.args) base.args = deserializeValue(data.args);
+
+        // Mark pending/running tool calls as error on restore
+        if (data.status === 'running' || data.status === 'pending') {
+          base.status = 'error';
+          console.log(`[Restoration] Marking tool-call ${data.id} as interrupted (was ${data.status})`);
+        } else {
+          base.status = data.status;
+        }
         break;
     }
     
@@ -148,78 +181,9 @@ function deserializeFacet(data: any): Facet | null {
 }
 
 /**
- * Restore element tree from serialized format
- */
-export async function restoreElementTree(
-  space: Space,
-  serialized: SerializedElement
-): Promise<void> {
-  // Clear existing children (but not the space itself)
-  const existingChildren = [...space.children];
-  for (const child of existingChildren) {
-    space.removeChild(child);
-  }
-  
-  // Restore children recursively
-  for (const childData of serialized.children) {
-    const child = await restoreElement(childData);
-    if (child) {
-      space.addChild(child);
-    }
-  }
-}
-
-/**
- * Restore a single element and its subtree
- */
-async function restoreElement(data: SerializedElement): Promise<Element | null> {
-  try {
-    // Create element - for now only basic Element type is supported
-    // Custom element types would need to be refactored as Components
-    const element = new Element(data.name, data.id);
-    
-    // Restore active state
-    if (!data.active) {
-      element.active = false;
-    }
-    
-    // Restore subscriptions
-    for (const topic of data.subscriptions) {
-      element.subscribe(topic);
-    }
-    
-    // Restore components and wait for them to fully initialize
-    const componentPromises: Promise<any>[] = [];
-    for (const componentData of data.components) {
-      const component = await restoreComponent(componentData);
-      if (component) {
-        // Use addComponentAsync to properly mount and wait for initialization
-        componentPromises.push(element.addComponentAsync(component, true)); // isRestoring=true
-      }
-    }
-    
-    // Wait for all components to finish mounting
-    await Promise.all(componentPromises);
-    
-    // Restore children recursively
-    for (const childData of data.children) {
-      const child = await restoreElement(childData);
-      if (child) {
-        element.addChild(child);
-      }
-    }
-    
-    return element;
-  } catch (error) {
-    console.error('Failed to restore element:', data.name, error);
-    return null;
-  }
-}
-
-/**
  * Restore a component from serialized data
  */
-async function restoreComponent(data: SerializedComponent): Promise<Component | null> {
+export async function restoreComponent(data: SerializedComponent): Promise<Component | null> {
   // Create component instance
   const component = ComponentRegistry.create(data.className);
   if (!component) {
@@ -255,6 +219,42 @@ async function restoreComponent(data: SerializedComponent): Promise<Component | 
 }
 
 /**
+ * Restore Space and its components
+ */
+export async function restoreSpace(space: Space, serialized: SerializedSpace): Promise<void> {
+  console.log(`[Restoration] Restoring space ${serialized.id}`);
+
+  // Support both new format (components) and legacy format (children)
+  const componentsData = serialized.components || (serialized as any).children;
+  if (!componentsData) {
+    console.warn('[Restoration] No components or children found in serialized space');
+    return;
+  }
+
+  if ((serialized as any).children && !serialized.components) {
+    console.warn('⚠️  [Restoration] DEPRECATED: Space uses legacy "children" field instead of "components"');
+    console.warn('    This will be automatically migrated on next snapshot save.');
+  }
+
+  // Restore components
+  for (const componentData of componentsData) {
+    try {
+      const component = await restoreComponent(componentData);
+      if (component) {
+        // Use component ID from serialization if available
+        const componentId = componentData.id || `restored-component-${Date.now()}`;
+        
+        // Add to space (this will trigger mount/restore)
+        space.addComponent(component, componentId, true);
+        console.log(`[Restoration] Restored component: ${component.constructor.name} (${componentId})`);
+      }
+    } catch (error) {
+      console.error(`[Restoration] Failed to restore component:`, error);
+    }
+  }
+}
+
+/**
  * Full restoration from a persistence snapshot
  */
 export async function restoreFromSnapshot(
@@ -266,9 +266,19 @@ export async function restoreFromSnapshot(
   
   // Step 1: Restore VEIL state
   await restoreVEILState(veilManager, snapshot.veilState);
-  
-  // Step 2: Restore element tree
-  await restoreElementTree(space, snapshot.elementTree);
+
+  // Step 2: Restore Space (replaces element tree restoration)
+  // Support both new format (space) and legacy format (elementTree)
+  const spaceData = snapshot.space || (snapshot as any).elementTree;
+  if (spaceData) {
+    if ((snapshot as any).elementTree && !snapshot.space) {
+      console.warn('⚠️  [Restoration] DEPRECATED: Loading from legacy "elementTree" format');
+      console.warn('    Please resave this snapshot to migrate to the new "space" format.');
+    }
+    await restoreSpace(space, spaceData);
+  } else {
+    console.warn('[Restoration] No space or elementTree found in snapshot');
+  }
   
   // Step 3: TODO - Restore compressed frame batches if present
   if (snapshot.compressedFrames) {

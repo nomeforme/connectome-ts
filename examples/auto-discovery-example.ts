@@ -1,113 +1,133 @@
 /**
- * Example showing how auto-discovery would work
- * Components are only added to elements, Space finds them automatically
+ * Example showing FLEX architecture - priority-based component execution
+ * Components extend Component and specify their execution priority
  */
 
-// Modified Space implementation (pseudocode)
-class SpaceWithAutoDiscovery extends Space {
-  
-  // Override phase methods to include discovery
-  
-  protected runPhase1(events: SpaceEvent[]): VEILDelta[] {
-    // Discover all receptors in element tree
-    const receptors = this.discoverReceptors();
-    
-    // Group by topic for efficiency
-    const receptorsByTopic = new Map<string, Receptor[]>();
-    for (const receptor of receptors) {
-      for (const topic of receptor.topics) {
-        const list = receptorsByTopic.get(topic) || [];
-        list.push(receptor);
-        receptorsByTopic.set(topic, list);
-      }
-    }
-    
-    // Process events as normal
-    const deltas: VEILDelta[] = [];
-    for (const event of events) {
-      const topicReceptors = receptorsByTopic.get(event.topic) || [];
-      for (const receptor of topicReceptors) {
-        deltas.push(...receptor.transform(event, this.getReadonlyState()));
-      }
-    }
-    
-    return deltas;
-  }
-  
-  private discoverReceptors(): Receptor[] {
-    const receptors: Receptor[] = [];
-    this.traverseComponents((component) => {
-      if (isReceptor(component)) {
-        receptors.push(component);
+import { Space, Element, VEILStateManager } from '../src';
+import { Component } from '../src/spaces/component';
+import { ExecutionContext, SpaceEvent } from '../src/spaces/types';
+import { ReadonlyVEILState, FacetDelta, FacetFilter } from '../src/spaces/receptor-effector-types';
+import { VEILDelta, Facet } from '../src/veil/types';
+
+/**
+ * FLEX Architecture Overview:
+ *
+ * All components extend Component with explicit priority values:
+ * - 0-99: Modulators (preprocess events)
+ * - 100-199: Receptors (convert events to facets)
+ * - 200-299: Transforms (process VEIL state)
+ * - 300-399: Effectors (execute side effects)
+ * - 400+: Maintainers (cleanup, persistence)
+ *
+ * Components execute in priority order, with state updates
+ * visible to later components within the same frame.
+ */
+
+// Example FLEX receptor (priority 100)
+class ButtonPressReceptor extends Component {
+  priority = 100;
+  topics = ['button:press'];
+
+  execute(context: ExecutionContext): void {
+    const { event } = context;
+    if (!event || event.topic !== 'button:press') return;
+
+    this.addOperation({
+      type: 'addFacet',
+      facet: {
+        id: `button-press-${Date.now()}`,
+        type: 'event',
+        content: 'Button was pressed'
       }
     });
-    return receptors;
-  }
-  
-  private traverseComponents(callback: (component: Component) => void): void {
-    const traverse = (element: Element) => {
-      for (const component of element.components) {
-        callback(component);
-      }
-      for (const child of element.children) {
-        traverse(child);
-      }
-    };
-    traverse(this);
   }
 }
 
-// Usage becomes much simpler:
+// Example FLEX transform (priority 200)
+class FeatureTransform extends Component {
+  priority = 200;
 
+  execute(context: ExecutionContext): void {
+    const { state } = context;
+    // Process state and emit operations
+    for (const [id, facet] of state.facets) {
+      if (facet.type === 'event') {
+        // Transform facets as needed
+      }
+    }
+  }
+}
+
+// Example FLEX effector (priority 300)
+class DispenseEffector extends Component {
+  priority = 300;
+  facetFilters: FacetFilter[] = [{ type: 'event' }];
+
+  execute(context: ExecutionContext): void {
+    const { frame, state } = context;
+    if (!frame) return;
+
+    // Build changes from frame deltas
+    for (const delta of frame.deltas) {
+      if (delta.type === 'addFacet' && delta.facet.type === 'event') {
+        // Process event facets and emit events
+        this.addEvent({
+          topic: 'element:create',
+          source: { elementId: this.element?.id || 'dispenser', elementPath: [], elementType: 'Element' },
+          timestamp: Date.now(),
+          payload: { name: 'new-element' }
+        });
+      }
+    }
+  }
+}
+
+// Usage - simple and clear
 async function createBoxDispenser() {
-  const space = new SpaceWithAutoDiscovery(veilState);
-  
+  const veilState = new VEILStateManager();
+  const space = new Space(veilState);
+
   // Create element
   const dispenserElement = new Element('dispenser');
   space.addChild(dispenserElement);
-  
-  // Just add component - no dual registration!
+
+  // Add FLEX component with explicit registration
   const dispenseEffector = new DispenseEffector();
   dispenserElement.addComponent(dispenseEffector);
-  // NOT NEEDED: space.addEffector(dispenseEffector);
-  
+  space.addEffector(dispenseEffector);
+
   // Create button receptor
   const buttonElement = new Element('button');
   dispenserElement.addChild(buttonElement);
-  
+
   const buttonReceptor = new ButtonPressReceptor();
   buttonElement.addComponent(buttonReceptor);
-  // NOT NEEDED: space.addReceptor(buttonReceptor);
-  
-  // Space will automatically discover these components
-  // when processing each phase!
+  space.addReceptor(buttonReceptor);
+
+  // FLEX executes components in priority order:
+  // 1. ButtonPressReceptor (100) - converts events to facets
+  // 2. DispenseEffector (300) - processes facets and emits events
 }
 
-// Components can even be added dynamically
+// Dynamic component addition works the same way
 async function addNewFeature(space: Space) {
   const featureElement = new Element('new-feature');
   space.addChild(featureElement);
-  
-  // Add transform - automatically discovered in next Phase 2
-  featureElement.addComponent(new FeatureTransform());
-  
-  // Add effector - automatically discovered in next Phase 3  
-  featureElement.addComponent(new FeatureEffector());
+
+  // Add transform component
+  const transform = new FeatureTransform();
+  featureElement.addComponent(transform);
+  space.addTransform(transform);
+
+  // Add effector component
+  const effector = new DispenseEffector();
+  featureElement.addComponent(effector);
+  space.addEffector(effector);
 }
 
-// Example component that's both element component AND effector
-class DispenseEffector extends BaseEffector implements Effector {
-  // Just implement the interfaces - no registration code!
-  
-  async process(changes: FacetDelta[], state: ReadonlyVEILState): Promise<EffectorResult> {
-    // Process changes...
-    return { events: [] };
-  }
-}
-
-// Benefits:
-// 1. No dual registration
-// 2. Components can be added/removed dynamically
-// 3. Single source of truth (element tree)
-// 4. Zero boilerplate in components
-// 5. Works with existing component interfaces
+// Benefits of FLEX:
+// 1. Simple priority-based execution model
+// 2. All components extend Component
+// 3. State updates visible to later components in same frame
+// 4. Clear, predictable execution order
+// 5. Easy to debug and understand
