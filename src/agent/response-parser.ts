@@ -34,11 +34,19 @@ export interface ParsedResponse {
 /**
  * Parse raw LLM completion into VEIL operations and events
  */
+/**
+ * Parsed element with position for chronological ordering
+ */
+interface PositionedElement {
+  position: number;
+  operation: OutgoingVEILOperation;
+  event?: { topic: string; payload: any };
+}
+
 export function parseAgentResponse(
   rawOutput: string,
   config: ParserConfig
 ): ParsedResponse {
-  const operations: OutgoingVEILOperation[] = [];
   const events: Array<{ topic: string; payload: any }> = [];
   let hasMoreToSay = false;
 
@@ -46,6 +54,12 @@ export function parseAgentResponse(
 
   // Normalize turn markers
   let turnContent = stripTurnMarkers(rawOutput);
+
+  // Collect all parsed elements with their positions for chronological ordering
+  const elements: PositionedElement[] = [];
+
+  // Track positions of all parsed elements for speech segmentation
+  const parsedRanges: Array<{ start: number; end: number }> = [];
 
   // Protect backticked content from being parsed as actions
   const backtickPlaceholders: string[] = [];
@@ -55,13 +69,17 @@ export function parseAgentResponse(
     return placeholder;
   });
 
-  // Parse {@element.action} syntax
+  // Parse {@element.action} syntax - track position
   const actionRegex = /\{@([\w.-]+)(?:\s*\(([^)]*)\)|\s*\{([\s\S]*?)\})?\}/g;
   let actionMatch;
   while ((actionMatch = actionRegex.exec(protectedContent)) !== null) {
     const fullPath = actionMatch[1];
     const inlineParams = actionMatch[2];
     const blockParams = actionMatch[3];
+    const position = actionMatch.index;
+    const matchEnd = position + actionMatch[0].length;
+
+    parsedRanges.push({ start: position, end: matchEnd });
 
     const pathParts = fullPath.split('.');
     let parameters: Record<string, any> = {};
@@ -80,15 +98,18 @@ export function parseAgentResponse(
     if (alias) delete parameters.alias;
 
     const toolName = pathParts.join('.');
-    operations.push({
-      type: 'addFacet',
-      facet: createActionFacet(toolName, parameters, agentId, agentName, defaultStreamId, alias)
-    });
+    const element: PositionedElement = {
+      position,
+      operation: {
+        type: 'addFacet',
+        facet: createActionFacet(toolName, parameters, agentId, agentName, defaultStreamId, alias)
+      }
+    };
 
     // Emit event if tool is registered
     const tool = tools?.get(toolName);
     if (tool?.emitEvent) {
-      events.push({
+      element.event = {
         topic: tool.emitEvent.topic,
         payload: {
           path: pathParts,
@@ -96,24 +117,35 @@ export function parseAgentResponse(
           parameters: Object.keys(parameters).length > 0 ? parameters : {},
           ...(tool.emitEvent.payloadTemplate || {})
         }
-      });
+      };
     }
+
+    elements.push(element);
   }
 
-  // Parse thoughts
+  // Parse thoughts - track position
   const thoughtRegex = /<thought>([\s\S]*?)<\/thought>/g;
   let thoughtMatch;
   while ((thoughtMatch = thoughtRegex.exec(turnContent)) !== null) {
-    operations.push({
-      type: 'addFacet',
-      facet: createThoughtFacet(thoughtMatch[1].trim(), agentId, agentName, defaultStreamId)
+    const position = thoughtMatch.index;
+    parsedRanges.push({ start: position, end: position + thoughtMatch[0].length });
+
+    elements.push({
+      position,
+      operation: {
+        type: 'addFacet',
+        facet: createThoughtFacet(thoughtMatch[1].trim(), agentId, agentName, defaultStreamId)
+      }
     });
   }
 
-  // Parse legacy tool calls
+  // Parse legacy tool calls - track position
   const toolRegex = /<tool_call\s+name="([^"]+)">([\s\S]*?)<\/tool_call>/g;
   let toolMatch;
   while ((toolMatch = toolRegex.exec(turnContent)) !== null) {
+    const position = toolMatch.index;
+    parsedRanges.push({ start: position, end: position + toolMatch[0].length });
+
     const toolName = toolMatch[1];
     const paramContent = toolMatch[2];
 
@@ -124,16 +156,22 @@ export function parseAgentResponse(
       params[paramMatch[1]] = parseParameterValue(paramMatch[2]);
     }
 
-    operations.push({
-      type: 'addFacet',
-      facet: createActionFacet(toolName, params, agentId, agentName, defaultStreamId)
+    elements.push({
+      position,
+      operation: {
+        type: 'addFacet',
+        facet: createActionFacet(toolName, params, agentId, agentName, defaultStreamId)
+      }
     });
   }
 
-  // Parse <action> tags (new format with multiline content)
+  // Parse <action> tags (new format with multiline content) - track position
   const actionTagRegex = /<action\s+name="([^"]+)"([^>]*)>([\s\S]*?)<\/action>/g;
   let actionTagMatch;
   while ((actionTagMatch = actionTagRegex.exec(turnContent)) !== null) {
+    const position = actionTagMatch.index;
+    parsedRanges.push({ start: position, end: position + actionTagMatch[0].length });
+
     const actionName = actionTagMatch[1];
     const attributesStr = actionTagMatch[2];
     let content = actionTagMatch[3];
@@ -166,55 +204,79 @@ export function parseAgentResponse(
     const { alias: _, ...otherAttributes } = attributes;
     const params: Record<string, any> = { ...otherAttributes, content };
 
-    operations.push({
-      type: 'addFacet',
-      facet: createActionFacet(actionName, params, agentId, agentName, defaultStreamId, alias)
-    });
+    const element: PositionedElement = {
+      position,
+      operation: {
+        type: 'addFacet',
+        facet: createActionFacet(actionName, params, agentId, agentName, defaultStreamId, alias)
+      }
+    };
 
     // Emit event if tool is registered
     const tool = tools?.get(actionName);
     if (tool?.emitEvent) {
-      events.push({
+      element.event = {
         topic: tool.emitEvent.topic,
         payload: {
           action: actionName,
           parameters: params,
           ...(tool.emitEvent.payloadTemplate || {})
         }
+      };
+    }
+
+    elements.push(element);
+  }
+
+  // Extract speech segments between parsed elements
+  // Sort ranges by start position
+  parsedRanges.sort((a, b) => a.start - b.start);
+
+  // Find gaps between parsed ranges - these are speech segments
+  let lastEnd = 0;
+  for (const range of parsedRanges) {
+    if (range.start > lastEnd) {
+      // There's a gap - extract speech content
+      let segment = turnContent.substring(lastEnd, range.start);
+      segment = stripTurnMarkers(segment).trim();
+      if (segment) {
+        elements.push({
+          position: lastEnd,
+          operation: {
+            type: 'addFacet',
+            facet: createSpeechFacet(segment, agentId, agentName, defaultStreamId)
+          }
+        });
+      }
+    }
+    lastEnd = Math.max(lastEnd, range.end);
+  }
+
+  // Check for trailing speech after last parsed element
+  if (lastEnd < turnContent.length) {
+    let segment = turnContent.substring(lastEnd);
+    segment = stripTurnMarkers(segment).trim();
+    if (segment) {
+      elements.push({
+        position: lastEnd,
+        operation: {
+          type: 'addFacet',
+          facet: createSpeechFacet(segment, agentId, agentName, defaultStreamId)
+        }
       });
     }
   }
 
-  // Extract speech (everything not in special tags)
-  let speechContent = turnContent;
+  // Sort all elements by their position in the text (chronological order)
+  elements.sort((a, b) => a.position - b.position);
 
-  // Protect backticks
-  const speechBacktickPlaceholders: string[] = [];
-  let protectedSpeech = speechContent.replace(/`([^`]+)`/g, (match, content) => {
-    const placeholder = `__SPEECH_BACKTICK_${speechBacktickPlaceholders.length}__`;
-    speechBacktickPlaceholders.push(match);
-    return placeholder;
-  });
-
-  // Remove parsed content
-  protectedSpeech = protectedSpeech.replace(/<thought>[\s\S]*?<\/thought>/g, '');
-  protectedSpeech = protectedSpeech.replace(/<tool_call\s+name="[^"]+"[\s\S]*?<\/tool_call>/g, '');
-  protectedSpeech = protectedSpeech.replace(/<action\s+name="[^"]+"\s*[^>]*>[\s\S]*?<\/action>/g, '');
-  protectedSpeech = protectedSpeech.replace(/\{@[\w.-]+(?:\s*\([^)]*\)|\s*\{[\s\S]*?\})?\}/g, '');
-
-  // Restore backticks
-  speechContent = stripTurnMarkers(protectedSpeech);
-  speechBacktickPlaceholders.forEach((original, index) => {
-    speechContent = speechContent.replace(`__SPEECH_BACKTICK_${index}__`, original);
-  });
-
-  speechContent = speechContent.trim();
-
-  if (speechContent) {
-    operations.push({
-      type: 'addFacet',
-      facet: createSpeechFacet(speechContent, agentId, agentName, defaultStreamId)
-    });
+  // Extract operations and events from sorted elements
+  const operations: OutgoingVEILOperation[] = [];
+  for (const element of elements) {
+    operations.push(element.operation);
+    if (element.event) {
+      events.push(element.event);
+    }
   }
 
   return { operations, events, hasMoreToSay };
