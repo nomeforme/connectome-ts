@@ -295,7 +295,103 @@ export class BasicAgent implements AgentInterface {
       }
     }
   }
-  
+
+  /**
+   * Streaming version of runCycle - yields chunks as they arrive from the LLM
+   *
+   * @param context - Rendered context for the agent
+   * @param streamRef - Optional stream reference for routing
+   * @yields Streaming chunks with accumulated content
+   */
+  async *runCycleStreaming(
+    context: RenderedContext,
+    streamRef?: StreamRef
+  ): AsyncIterable<{
+    chunk: string;
+    accumulated: string;
+    done: boolean;
+    tokensUsed?: number;
+    modelId?: string;
+  }> {
+    const cycleSpan = this.tracer?.startSpan('runCycleStreaming', 'BasicAgent');
+
+    try {
+      // Discover tools from VEIL before each cycle
+      this.discoverToolsFromVEIL();
+
+      // Log context size
+      this.tracer?.record({
+        id: `llm-stream-context-${Date.now()}`,
+        timestamp: Date.now(),
+        level: 'info',
+        category: TraceCategory.AGENT_CONTEXT_BUILD,
+        component: 'BasicAgent',
+        operation: 'runCycleStreaming',
+        data: {
+          messages: context.messages.length,
+          totalTokens: context.metadata.totalTokens,
+          activeStream: streamRef?.streamId,
+          streaming: true
+        },
+        parentId: cycleSpan?.id
+      });
+
+      // Stream from LLM
+      let accumulated = '';
+      let lastTokensUsed: number | undefined;
+      let lastModelId: string | undefined;
+
+      for await (const chunk of this.llmProvider.generateStream(
+        context.messages,
+        {
+          maxTokens: this.config.defaultMaxTokens || 1000,
+          temperature: this.config.defaultTemperature || 1.0,
+          stopSequences: ['</my_turn>'],
+          formatConfig: this.buildFormatConfig()
+        }
+      )) {
+        accumulated += chunk.content;
+
+        if (chunk.done) {
+          lastTokensUsed = chunk.tokensUsed;
+          lastModelId = chunk.modelId;
+        }
+
+        yield {
+          chunk: chunk.content,
+          accumulated,
+          done: chunk.done,
+          tokensUsed: chunk.tokensUsed,
+          modelId: chunk.modelId
+        };
+      }
+
+      console.log(`[BasicAgent] Streaming complete (${accumulated.length} chars)`);
+
+      this.tracer?.record({
+        id: `llm-stream-response-${Date.now()}`,
+        timestamp: Date.now(),
+        level: 'info',
+        category: TraceCategory.AGENT_LLM_CALL,
+        component: 'BasicAgent',
+        operation: 'runCycleStreaming',
+        data: {
+          provider: this.llmProvider.getProviderName(),
+          tokensUsed: lastTokensUsed,
+          responseLength: accumulated.length,
+          content: accumulated.substring(0, 200) + '...',
+          streaming: true
+        },
+        parentId: cycleSpan?.id
+      });
+
+    } finally {
+      if (cycleSpan) {
+        this.tracer?.endSpan(cycleSpan.id);
+      }
+    }
+  }
+
   parseCompletion(completion: string): ParsedCompletion {
     const operations: OutgoingVEILOperation[] = [];
     const events: Array<{ topic: string; payload: any }> = [];

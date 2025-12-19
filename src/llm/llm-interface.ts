@@ -37,6 +37,20 @@ export interface LLMResponse {
   modelId?: string;
 }
 
+/**
+ * Streaming chunk from LLM
+ */
+export interface LLMStreamChunk {
+  /** Incremental content delta */
+  content: string;
+  /** True when stream is complete */
+  done: boolean;
+  /** Token count (only available on final chunk) */
+  tokensUsed?: number;
+  /** Model ID (only available on final chunk) */
+  modelId?: string;
+}
+
 export interface LLMOptions {
   maxTokens?: number;
   temperature?: number;
@@ -77,7 +91,7 @@ export interface LLMOptions {
 export interface LLMProvider {
   /**
    * Generate a response from the LLM
-   * 
+   *
    * @param messages - Sequence of messages including potential cache markers
    * @param options - Generation options
    * @returns The LLM response
@@ -86,23 +100,36 @@ export interface LLMProvider {
     messages: LLMMessage[],
     options?: LLMOptions
   ): Promise<LLMResponse>;
-  
+
+  /**
+   * Generate a streaming response from the LLM
+   *
+   * @param messages - Sequence of messages including potential cache markers
+   * @param options - Generation options
+   * @returns AsyncIterable of stream chunks
+   */
+  generateStream(
+    messages: LLMMessage[],
+    options?: LLMOptions
+  ): AsyncIterable<LLMStreamChunk>;
+
   /**
    * Estimate token count for text
    */
   estimateTokens(text: string): number;
-  
+
   /**
    * Get provider name for logging
    */
   getProviderName(): string;
-  
+
   /**
    * Get provider capabilities
    */
   getCapabilities(): {
     supportsPrefill: boolean;
     supportsCaching: boolean;
+    supportsStreaming: boolean;
     maxContextLength?: number;
   };
 }

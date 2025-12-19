@@ -29,6 +29,7 @@ import { FacetDelta, ReadonlyVEILState, FacetFilter } from '../spaces/receptor-e
 import { getGlobalTracer, TraceStorage } from '../tracing';
 import { RenderedContext } from '../hud/types-v2';
 import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
+import { ActivationStreamPayload } from './response-handler';
 
 @persistable(1)
 export class AgentComponent extends Component implements RestorableComponent {
@@ -244,8 +245,9 @@ export class AgentComponent extends Component implements RestorableComponent {
 
   /**
    * Runs the agent cycle in the background (fire-and-forget).
-   * Emits activation:completed event with raw LLM output when done.
-   * The ActivationCompletedReceptor will parse and create all facets in a single frame.
+   * Uses streaming mode - emits activation:stream events for each chunk.
+   * ResponseHandler accumulates chunks and emits activation:completed when done.
+   * The ActivationCompletedReceptor then parses and creates all facets in a single frame.
    */
   private runAgentCycleBackground(
     context: RenderedContext,
@@ -255,34 +257,38 @@ export class AgentComponent extends Component implements RestorableComponent {
   ): void {
     (async () => {
       try {
-        const response = await this.runAgentCycle(context, streamRef, activationId, streamId);
-
-        // Emit single activation:completed event with raw output
-        // ActivationCompletedReceptor will parse and create facets in one frame
-        this.emit({
-          topic: 'activation:completed',
-          timestamp: Date.now(),
-          payload: {
-            activationId,
-            agentId: this.id,
-            agentName: this.agentConfig?.name,
-            streamId,
-            streamType: streamRef?.streamType,
-            rawOutput: response.rawOutput,
-            llmMetadata: response.llmMetadata,
-            success: true
-          }
-        });
-
-        // Emit any events from the agent (legacy support, may be removed later)
-        for (const event of response.events) {
-          this.emit(event);
+        // Check if agent supports streaming
+        const agent = this.agent as BasicAgent;
+        if (agent && typeof agent.runCycleStreaming === 'function') {
+          // Use streaming mode
+          await this.runAgentCycleStreaming(context, streamRef, activationId, streamId);
+        } else {
+          // Fallback to non-streaming mode
+          await this.runAgentCycleNonStreaming(context, streamRef, activationId, streamId);
         }
-
       } catch (error) {
         console.error('[AgentComponent] Agent cycle error:', error);
 
-        // Emit activation:completed with error
+        // Emit activation:stream with error (done=true triggers ResponseHandler)
+        const errorPayload: ActivationStreamPayload = {
+          activationId,
+          agentId: this.id,
+          agentName: this.agentConfig?.name,
+          streamId,
+          streamType: streamRef?.streamType,
+          chunk: '',
+          accumulated: '',
+          done: true,
+          streamSequence: 0
+        };
+
+        this.emit({
+          topic: 'activation:stream',
+          timestamp: Date.now(),
+          payload: errorPayload
+        });
+
+        // Also emit error event for error handling
         this.emit({
           topic: 'activation:completed',
           timestamp: Date.now(),
@@ -300,6 +306,77 @@ export class AgentComponent extends Component implements RestorableComponent {
         this.processingActivations.delete(activationId);
       }
     })();
+  }
+
+  /**
+   * Streaming agent cycle - emits activation:stream events for each chunk
+   */
+  private async runAgentCycleStreaming(
+    context: RenderedContext,
+    streamRef: StreamRef | undefined,
+    activationId: string,
+    streamId: string
+  ): Promise<void> {
+    const agent = this.agent as BasicAgent;
+    const effectiveStreamRef = streamRef || (streamId ? { streamId } as StreamRef : undefined);
+
+    let streamSequence = 0;
+
+    for await (const streamChunk of agent.runCycleStreaming(context, effectiveStreamRef)) {
+      const payload: ActivationStreamPayload = {
+        activationId,
+        agentId: this.id,
+        agentName: this.agentConfig?.name,
+        streamId,
+        streamType: streamRef?.streamType,
+        chunk: streamChunk.chunk,
+        accumulated: streamChunk.accumulated,
+        done: streamChunk.done,
+        streamSequence: streamSequence++,
+        tokensUsed: streamChunk.tokensUsed,
+        modelId: streamChunk.modelId,
+        tools: (this.agent as any)?.tools
+      };
+
+      this.emit({
+        topic: 'activation:stream',
+        timestamp: Date.now(),
+        payload
+      });
+    }
+  }
+
+  /**
+   * Non-streaming fallback - for agents that don't support streaming
+   */
+  private async runAgentCycleNonStreaming(
+    context: RenderedContext,
+    streamRef: StreamRef | undefined,
+    activationId: string,
+    streamId: string
+  ): Promise<void> {
+    const response = await this.runAgentCycle(context, streamRef, activationId, streamId);
+
+    // Emit as a single stream event with done=true
+    const payload: ActivationStreamPayload = {
+      activationId,
+      agentId: this.id,
+      agentName: this.agentConfig?.name,
+      streamId,
+      streamType: streamRef?.streamType,
+      chunk: response.rawOutput,
+      accumulated: response.rawOutput,
+      done: true,
+      streamSequence: 0,
+      tokensUsed: response.llmMetadata?.tokensUsed,
+      tools: (this.agent as any)?.tools
+    };
+
+    this.emit({
+      topic: 'activation:stream',
+      timestamp: Date.now(),
+      payload
+    });
   }
 
   /**

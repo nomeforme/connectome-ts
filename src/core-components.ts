@@ -11,6 +11,7 @@ import { ComponentRegistry } from './persistence/component-registry';
 // Core components
 import { AgentComponent } from './agent/agent-component';
 import { ActivationCompletedReceptor } from './agent/activation-completed-receptor';
+import { ResponseHandler } from './agent/response-handler';
 import { ActionEffector } from './spaces/action-effector';
 import { ContextTransform } from './hud/context-transform';
 import { ConsoleChatComponent } from './elements/console-chat';
@@ -26,6 +27,7 @@ import { ActivationDecider } from './scripting/activation-decider';
 ComponentRegistry.register('AgentComponent', AgentComponent);
 ComponentRegistry.register('AgentEffector', AgentComponent); // Backwards compatibility alias
 ComponentRegistry.register('ActivationCompletedReceptor', ActivationCompletedReceptor);
+ComponentRegistry.register('ResponseHandler', ResponseHandler);
 ComponentRegistry.register('ActionEffector', ActionEffector);
 ComponentRegistry.register('ContextTransform', ContextTransform);
 ComponentRegistry.register('ConsoleChatComponent', ConsoleChatComponent);

@@ -3,7 +3,7 @@
  * Can be configured with deterministic responses
  */
 
-import { LLMProvider, LLMMessage, LLMResponse, LLMOptions } from './llm-interface';
+import { LLMProvider, LLMMessage, LLMResponse, LLMOptions, LLMStreamChunk } from './llm-interface';
 import { getGlobalTracer, TraceCategory } from '../tracing';
 
 export class MockLLMProvider implements LLMProvider {
@@ -243,7 +243,72 @@ export class MockLLMProvider implements LLMProvider {
       tokensUsed: 3
     });
   }
-  
+
+  /**
+   * Streaming version of generate - simulates streaming by breaking response into chunks
+   */
+  async *generateStream(
+    messages: LLMMessage[],
+    options?: LLMOptions
+  ): AsyncIterable<LLMStreamChunk> {
+    // Get the full response first
+    const response = await this.generate(messages, options);
+
+    // Break the response into word-sized chunks to simulate streaming
+    const words = response.content.split(/(\s+)/); // Keep whitespace as separate tokens
+
+    const tracer = getGlobalTracer();
+    tracer?.record({
+      id: `mock-llm-stream-start-${Date.now()}`,
+      timestamp: Date.now(),
+      level: 'debug',
+      category: TraceCategory.LLM_REQUEST,
+      component: 'MockLLMProvider',
+      operation: 'generateStream',
+      data: {
+        totalWords: words.length,
+        totalChars: response.content.length,
+        streaming: true
+      }
+    });
+
+    // Yield chunks with small delays to simulate network
+    for (let i = 0; i < words.length; i++) {
+      const word = words[i];
+      if (word.length > 0) {
+        // Optional: add small delay to simulate network latency
+        // await new Promise(resolve => setTimeout(resolve, 10));
+
+        yield {
+          content: word,
+          done: false
+        };
+      }
+    }
+
+    // Emit final chunk with done=true
+    yield {
+      content: '',
+      done: true,
+      tokensUsed: response.tokensUsed,
+      modelId: 'mock'
+    };
+
+    tracer?.record({
+      id: `mock-llm-stream-end-${Date.now()}`,
+      timestamp: Date.now(),
+      level: 'debug',
+      category: TraceCategory.LLM_RESPONSE,
+      component: 'MockLLMProvider',
+      operation: 'generateStream',
+      data: {
+        contentLength: response.content.length,
+        tokensUsed: response.tokensUsed,
+        streaming: true
+      }
+    });
+  }
+
   private traceAndReturn(response: LLMResponse): LLMResponse {
     const tracer = getGlobalTracer();
     tracer?.record({
@@ -275,6 +340,7 @@ export class MockLLMProvider implements LLMProvider {
     return {
       supportsPrefill: true,
       supportsCaching: false, // Mock doesn't actually cache
+      supportsStreaming: true,
       maxContextLength: 100000
     };
   }

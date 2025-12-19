@@ -1,4 +1,4 @@
-import type { LLMMessage, LLMOptions, LLMProvider, LLMResponse } from './llm-interface';
+import type { LLMMessage, LLMOptions, LLMProvider, LLMResponse, LLMStreamChunk } from './llm-interface';
 import { debugLLMBridge } from './debug-llm-bridge';
 import { getGlobalTracer, TraceCategory } from '../tracing';
 
@@ -83,7 +83,34 @@ export class DebugLLMProvider implements LLMProvider {
     return {
       supportsPrefill: true,
       supportsCaching: false,
+      supportsStreaming: false, // Debug provider waits for manual input, streaming doesn't apply
       maxContextLength: 100000
+    };
+  }
+
+  /**
+   * Streaming fallback - Debug provider doesn't support true streaming
+   * since responses are entered manually. Falls back to non-streaming.
+   */
+  async *generateStream(
+    messages: LLMMessage[],
+    options?: LLMOptions
+  ): AsyncIterable<LLMStreamChunk> {
+    // Get the full response (waits for manual debug input)
+    const response = await this.generate(messages, options);
+
+    // Yield the entire response as one chunk
+    yield {
+      content: response.content,
+      done: false
+    };
+
+    // Emit final chunk
+    yield {
+      content: '',
+      done: true,
+      tokensUsed: response.tokensUsed,
+      modelId: response.modelId
     };
   }
 }
