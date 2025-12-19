@@ -511,55 +511,38 @@ export async function activateAgent() {
   try {
       // Get active agents from current state
       const agents = Array.from(state.veilState?.agents?.values() || []);
-      
+
       // If there's only one agent, target it specifically
       const targetAgentId = agents.length === 1 ? agents[0].id : undefined;
       const targetAgent = agents.length === 1 ? agents[0].name : undefined;
-      
-      // Construct agent-activation facet directly
-      const activationFacet = {
-        id: `activation-${Date.now()}`,
-        type: 'agent-activation',
-        displayName: 'Manual activation from Debug UI',
-        state: {
-          reason: 'Manual activation from Debug UI',
-          priority: 'high',
-          sourceAgentId: 'debug-ui',
-          sourceAgentName: 'Debug UI',
-          targetAgentId,
-          targetAgent,
-          streamId: 'console:debug-ui'
-        },
-        ephemeral: true,
-        scope: 'global'
-      };
 
+      // Use semantic event instead of veil:operation
       const response = await fetch('/api/events', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          topic: 'veil:operation',
+          topic: 'debug:request-activation',
           sourceId: 'debug-ui',
           payload: {
-            operation: {
-              type: 'addFacet',
-              facet: activationFacet
-            }
+            reason: 'Manual activation from Debug UI',
+            priority: 'high',
+            targetAgentId,
+            targetAgent,
+            streamId: 'console:debug-ui'
           }
         })
       });
-    
+
     if (!response.ok) {
       const error = await response.json();
       throw new Error(error.error || 'Failed to activate agent');
     }
 
-    console.log('Agent activation facet injected via veil:operation', {
-      activationId: activationFacet.id,
+    console.log('Agent activation requested via debug:request-activation', {
       targetAgentId,
       targetAgent
     });
-    
+
     // Wait a moment for the frame to be created
     setTimeout(() => refresh(), 500);
   } catch (error) {

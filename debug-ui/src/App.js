@@ -512,28 +512,14 @@ export const App = {
           const targetAgent = agents.length === 1 ? agents[0].name : undefined;
 
           return {
-            topic: 'veil:operation',
+            topic: 'debug:request-activation',
             sourceId: 'debug-ui',
             payload: {
-              operation: {
-                type: 'addFacet',
-                facet: {
-                  id: `activation-${Date.now()}`,
-                  type: 'agent-activation',
-                  displayName: 'Manual activation from Debug UI',
-                  state: {
-                    reason: 'Manual activation from Debug UI',
-                    priority: 'high',
-                    sourceAgentId: 'debug-ui',
-                    sourceAgentName: 'Debug UI',
-                    targetAgentId,
-                    targetAgent,
-                    streamId: 'console:debug-ui'
-                  },
-                  ephemeral: true,
-                  scope: 'global'
-                }
-              }
+              reason: 'Manual activation from Debug UI',
+              priority: 'high',
+              targetAgentId,
+              targetAgent,
+              streamId: 'console:debug-ui'
             }
           };
         }

@@ -48,7 +48,7 @@ export class ActivationDecider extends Component {
   ];
 
   // Subscribe to all activation-worthy events
-  topics = ['action:completed', 'action:failed', 'panel:closed'];
+  topics = ['action:completed', 'action:failed', 'panel:closed', 'debug:request-activation'];
 
   execute(context: ExecutionContext): void {
     const { event } = context;
@@ -63,6 +63,9 @@ export class ActivationDecider extends Component {
         break;
       case 'panel:closed':
         this.handlePanelClosed(event);
+        break;
+      case 'debug:request-activation':
+        this.handleDebugRequestActivation(event);
         break;
     }
   }
@@ -149,6 +152,37 @@ export class ActivationDecider extends Component {
       metadata: {
         trigger: 'control-panel-toggle',
         panelId: payload.panelId
+      }
+    });
+
+    this.addOperation({
+      type: 'addFacet',
+      facet: activation
+    });
+  }
+
+  private handleDebugRequestActivation(event: any): void {
+    const payload = event.payload as {
+      reason?: string;
+      priority?: 'low' | 'normal' | 'high';
+      targetAgentId?: string;
+      targetAgent?: string;
+      streamId?: string;
+    };
+
+    const reason = payload?.reason || 'Manual activation from Debug UI';
+
+    console.log(`[ActivationDecider] Creating activation for debug:request-activation - ${reason}`);
+
+    const activation = createAgentActivation(reason, {
+      id: `activation-debug-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      priority: payload?.priority || 'high',
+      source: 'debug-ui',
+      streamId: payload?.streamId || 'console:debug-ui',
+      targetAgentId: payload?.targetAgentId,
+      targetAgent: payload?.targetAgent,
+      metadata: {
+        trigger: 'debug-ui-manual'
       }
     });
 
