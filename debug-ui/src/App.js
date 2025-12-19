@@ -149,6 +149,31 @@ export const App = {
       return state.frames.find(frame => frame.uuid === state.selectedFrameId) || null;
     });
 
+    // Reconstruct accumulated content for selected streaming frame
+    const selectedFrameAccumulatedContent = computed(() => {
+      const frame = selectedFrame.value;
+      if (!frame) return null;
+
+      // Only show for streaming frames
+      const isStreaming = frame.kind === 'in-stream' || frame.kind === 'out-stream';
+      if (!isStreaming) return null;
+
+      const activationId = frame.streamingActivationId;
+      if (!activationId) return null;
+
+      // Find all streaming frames for this activation up to and including this frame
+      const allFrames = state.frames || [];
+      const streamingFrames = allFrames.filter(f =>
+        f.streamingActivationId === activationId &&
+        f.sequence <= frame.sequence
+      );
+
+      // Sort by sequence ascending (oldest first)
+      streamingFrames.sort((a, b) => a.sequence - b.sequence);
+
+      return reconstructAccumulatedContent(streamingFrames.reverse());
+    });
+
     const selectedOperation = computed(() => {
       const frame = selectedFrame.value;
       if (!frame || state.selectedOperationIndex == null) return null;
@@ -845,7 +870,8 @@ export const App = {
       expandedStreamingGroups,
       toggleStreamingGroup,
       isStreamingGroupExpanded,
-      reconstructAccumulatedContent
+      reconstructAccumulatedContent,
+      selectedFrameAccumulatedContent
     };
   },
   template: `
@@ -921,12 +947,8 @@ export const App = {
                     <span class="frame-kind" :class="group.kind">{{ group.kind }}</span>
                     <span class="streaming-count">{{ group.count }} streaming frames</span>
                   </div>
-                  <!-- Expanded: show reconstructed content preview -->
+                  <!-- Expanded: show individual frames -->
                   <div v-if="isStreamingGroupExpanded(groupIdx)" class="streaming-group-content">
-                    <div class="streaming-preview">
-                      <div class="streaming-preview-label">Reconstructed content:</div>
-                      <pre class="streaming-preview-text">{{ truncate(group.reconstructedContent, 500) }}</pre>
-                    </div>
                     <!-- Individual frames -->
                     <div
                       v-for="frame in group.frames"
@@ -1236,6 +1258,12 @@ export const App = {
                       </span>
                       <span class="log-meta" v-if="eventMeta(event)">{{ eventMeta(event) }}</span>
                     </div>
+                  </div>
+                </div>
+                <div class="section streaming-accumulated-section" v-if="selectedFrameAccumulatedContent">
+                  <h3>Accumulated Content (up to this frame)</h3>
+                  <div class="streaming-accumulated-content">
+                    <pre class="streaming-accumulated-text">{{ selectedFrameAccumulatedContent }}</pre>
                   </div>
                 </div>
                 <div class="section" v-if="selectedFrame.renderedContext">

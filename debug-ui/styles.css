@@ -2296,17 +2296,39 @@ body {
   margin-bottom: 4px;
 }
 
-.streaming-preview-text {
-  font-size: 0.78rem;
-  color: var(--text-secondary);
+/* Streaming accumulated content section in frame detail view */
+.streaming-accumulated-section {
+  background: rgba(251, 191, 36, 0.06);
+  border: 1px solid rgba(251, 191, 36, 0.2);
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+
+.streaming-accumulated-section h3 {
+  color: #fbbf24;
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  border-bottom: 1px solid rgba(251, 191, 36, 0.15);
+}
+
+.streaming-accumulated-content {
+  padding: 8px;
+}
+
+.streaming-accumulated-text {
+  font-size: 0.82rem;
+  color: var(--text-primary);
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 200px;
+  max-height: 300px;
   overflow-y: auto;
   margin: 0;
-  padding: 6px;
-  background: rgba(0, 0, 0, 0.2);
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.25);
   border-radius: 4px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  line-height: 1.5;
 }
 
 .frame-item-nested {
