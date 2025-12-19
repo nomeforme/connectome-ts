@@ -39,6 +39,8 @@ interface ActionCompletedPayload {
 interface PanelToggledPayload {
   panelId: string;
   state: 'opened' | 'closed';
+  streamId?: string;
+  streamType?: string;
 }
 
 export class ActivationDecider extends Component {
@@ -145,12 +147,14 @@ export class ActivationDecider extends Component {
       ? 'Panel opened - new tools available'
       : 'Panel closed';
 
-    console.log(`[ActivationDecider] Creating activation for panel:toggled (${payload.state}) - ${reason}`);
+    console.log(`[ActivationDecider] Creating activation for panel:toggled (${payload.state}) - ${reason}, streamId: ${payload.streamId}`);
 
     const activation = createAgentActivation(reason, {
       id: `activation-panel-${payload.panelId}-${Date.now()}`,
       priority: 'normal',
       source: 'panel-toggled',
+      streamId: payload.streamId,
+      streamType: payload.streamType,
       metadata: {
         trigger: 'control-panel-toggle',
         panelId: payload.panelId,

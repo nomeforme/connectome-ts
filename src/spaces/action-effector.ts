@@ -16,6 +16,23 @@ import {
 import { hasStateAspect } from '../veil/types';
 import { priorityConstraint, ComponentPriority } from './constraints';
 
+/**
+ * Context passed to action handlers, including stream attribution
+ * from the originating action facet.
+ */
+export interface ActionContext {
+  /** The action facet ID */
+  actionId: string;
+  /** Stream ID for response routing */
+  streamId?: string;
+  /** Stream type (e.g., 'discord', 'console') */
+  streamType?: string;
+  /** Agent that initiated this action */
+  agentId?: string;
+  /** Agent name */
+  agentName?: string;
+}
+
 export class ActionEffector extends Component {
   constraints = [priorityConstraint(ComponentPriority.EFFECTOR)];
 
@@ -60,6 +77,15 @@ export class ActionEffector extends Component {
       const actionState = facet.state as { toolName: string; parameters?: Record<string, any> };
       const toolName = actionState.toolName;
       const parameters = actionState.parameters || {};
+
+      // Extract stream context from facet for attribution
+      const actionContext: ActionContext = {
+        actionId: facet.id,
+        streamId: (facet as any).streamId,
+        streamType: (facet as any).streamType,
+        agentId: (facet as any).agentId,
+        agentName: (facet as any).agentName
+      };
 
       // Skip actions handled by other effectors (e.g., ScriptExecutorEffector handles 'lua')
       const specialActions = ['lua'];
@@ -118,9 +144,10 @@ export class ActionEffector extends Component {
       const comp = component as any;
       if (comp.actions && comp.actions.has && comp.actions.has(action)) {
         const handler = comp.actions.get(action);
-        console.log(`[ActionEffector] Calling component action handler for '${action}'`);
+        console.log(`[ActionEffector] Calling component action handler for '${action}' with context:`, actionContext);
         try {
-          await handler(parameters);
+          // Pass action context as second parameter for stream attribution
+          await handler(parameters, actionContext);
           console.log(`[ActionEffector] Successfully executed action via component handler`);
         } catch (error) {
           console.error(`[ActionEffector] Error executing component action:`, error);

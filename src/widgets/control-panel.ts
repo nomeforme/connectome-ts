@@ -8,6 +8,7 @@
 import { InteractiveComponent } from '../components/base-components';
 import { persistent } from '../persistence/decorators';
 import type { SpaceEvent } from '../spaces/types';
+import type { ActionContext } from '../spaces/action-effector';
 
 /**
  * Metadata for a registered panel tool
@@ -27,6 +28,10 @@ export abstract class ControlPanelComponent extends InteractiveComponent {
 
   // Store tool metadata (NOT facets!) - transient, recreated on mount
   private toolsMetadata: PanelToolMetadata[] = [];
+
+  // Store stream context from the action that triggered open/close
+  // This allows panel:toggled events to carry stream attribution
+  private currentActionContext?: ActionContext;
 
   /**
    * Subclasses must provide a unique panel ID
@@ -60,8 +65,15 @@ export abstract class ControlPanelComponent extends InteractiveComponent {
     this.toolsMetadata = [];
 
     // Register panel control actions (just the handlers, no facets yet)
-    this.actions.set('open', async () => { await this.openPanel(); });
-    this.actions.set('close', async () => { await this.closePanel(); });
+    // Handlers receive (params, actionContext) from ActionEffector
+    this.actions.set('open', async (_params: any, context?: ActionContext) => {
+      this.currentActionContext = context;
+      await this.openPanel();
+    });
+    this.actions.set('close', async (_params: any, context?: ActionContext) => {
+      this.currentActionContext = context;
+      await this.closePanel();
+    });
 
     // Note: Subclasses will call registerPanelTool() in their onMount()
     // After subclass onMount() completes, onMountComplete() will be called
@@ -192,16 +204,21 @@ export abstract class ControlPanelComponent extends InteractiveComponent {
 
   /**
    * Emit panel:toggled event - agent may want to continue with updated context
+   * Includes stream context from the action that triggered this toggle
    */
   protected emitPanelToggled(state: 'opened' | 'closed'): void {
-    console.log(`[ControlPanel:${this.getPanelId()}] Emitting panel:toggled (${state})`);
+    const ctx = this.currentActionContext;
+    console.log(`[ControlPanel:${this.getPanelId()}] Emitting panel:toggled (${state}), streamId: ${ctx?.streamId}`);
 
     this.emit({
       topic: 'panel:toggled',
       timestamp: Date.now(),
       payload: {
         panelId: this.getPanelId(),
-        state
+        state,
+        // Include stream context for activation routing
+        streamId: ctx?.streamId,
+        streamType: ctx?.streamType
       }
     });
   }
