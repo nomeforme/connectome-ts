@@ -16,6 +16,7 @@ import { ExecutionContext } from '../spaces/types';
 import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
 import { parseAgentResponse, ParserConfig } from './response-parser';
 import { ToolDefinition } from './types';
+import { DetectedToolCall } from './incremental-tool-detector';
 
 /**
  * Payload for activation:completed event
@@ -46,6 +47,15 @@ export interface ActivationCompletedPayload {
   success: boolean;
   /** Error message if activation failed */
   error?: string;
+
+  // === Sync Tool Mode Fields ===
+
+  /** True if a tool call was detected mid-stream and interrupted the activation */
+  interrupted?: boolean;
+  /** Content before the detected tool call (for continuation context) */
+  partialContent?: string;
+  /** The detected tool call that caused the interruption */
+  detectedToolCall?: DetectedToolCall;
 }
 
 export class ActivationCompletedReceptor extends Component {

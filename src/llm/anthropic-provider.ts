@@ -6,11 +6,12 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { 
-  LLMProvider, 
-  LLMMessage, 
-  LLMOptions, 
-  LLMResponse 
+import {
+  LLMProvider,
+  LLMMessage,
+  LLMOptions,
+  LLMResponse,
+  LLMStreamChunk
 } from './llm-interface';
 import { getGlobalTracer, TraceCategory } from '../tracing';
 
@@ -341,6 +342,165 @@ export class AnthropicProvider implements LLMProvider {
     throw lastError;
   }
 
+  async *generateStream(messages: LLMMessage[], options?: LLMOptions): AsyncIterable<LLMStreamChunk> {
+    // Filter out cache markers - they don't go to the API
+    const apiMessages = messages.filter(m => m.role !== 'cache');
+
+    // Build stop sequences, including format-based ones
+    const stopSequences = [...(options?.stopSequences || [])];
+    if (options?.formatConfig?.assistant?.suffix) {
+      const suffix = options.formatConfig.assistant.suffix.trim();
+      if (suffix && !stopSequences.includes(suffix)) {
+        stopSequences.push(suffix);
+      }
+    }
+
+    // Convert to Anthropic format
+    const systemMessage = apiMessages.find(m => m.role === 'system')?.content || '';
+    const conversationMessages = apiMessages.filter(m => m.role !== 'system');
+
+    // Build Anthropic messages (simplified - no attachments in streaming for now)
+    const anthropicMessages: Anthropic.MessageParam[] = conversationMessages.map(msg => {
+      const messageContent = msg.role === 'assistant' ? msg.content.trimEnd() : msg.content;
+      return {
+        role: msg.role as 'user' | 'assistant',
+        content: messageContent
+      };
+    });
+
+    const request = {
+      model: options?.modelId || this.defaultModel,
+      max_tokens: options?.maxTokens || this.defaultMaxTokens,
+      temperature: options?.temperature ?? 1.0,
+      stop_sequences: stopSequences.length > 0 ? stopSequences : undefined,
+      system: systemMessage || undefined,
+      messages: anthropicMessages
+    };
+
+    console.log('[AnthropicProvider:generateStream] Starting streaming request...');
+    const tracer = getGlobalTracer();
+    tracer?.record({
+      id: `llm-stream-request-${Date.now()}`,
+      timestamp: Date.now(),
+      level: 'info',
+      category: TraceCategory.LLM_REQUEST,
+      component: 'AnthropicProvider',
+      operation: 'generateStream',
+      data: {
+        model: request.model,
+        maxTokens: request.max_tokens,
+        temperature: request.temperature,
+        stopSequences: request.stop_sequences,
+        systemPromptLength: systemMessage.length,
+        messageCount: anthropicMessages.length,
+        streaming: true
+      }
+    });
+
+    try {
+      // Check if already aborted before starting
+      if (options?.signal?.aborted) {
+        console.log('[AnthropicProvider:generateStream] Request aborted before start');
+        return;
+      }
+
+      const stream = this.client.messages.stream(request);
+
+      // Set up abort handling if signal provided
+      if (options?.signal) {
+        options.signal.addEventListener('abort', () => {
+          console.log('[AnthropicProvider:generateStream] Abort signal received, aborting stream');
+          stream.controller.abort();
+        }, { once: true });
+      }
+
+      let totalContent = '';
+      let inputTokens = 0;
+      let outputTokens = 0;
+      let modelId = request.model;
+
+      for await (const event of stream) {
+        // Check for abort between events
+        if (options?.signal?.aborted) {
+          console.log('[AnthropicProvider:generateStream] Stream aborted mid-flight');
+          return;
+        }
+
+        if (event.type === 'content_block_delta') {
+          const delta = event.delta;
+          if (delta.type === 'text_delta') {
+            const content = delta.text;
+            totalContent += content;
+            yield {
+              content,
+              done: false
+            };
+          }
+        } else if (event.type === 'message_start') {
+          // Capture input tokens from message start
+          if (event.message?.usage?.input_tokens) {
+            inputTokens = event.message.usage.input_tokens;
+          }
+          if (event.message?.model) {
+            modelId = event.message.model;
+          }
+        } else if (event.type === 'message_delta') {
+          // Capture output tokens from message delta
+          if (event.usage?.output_tokens) {
+            outputTokens = event.usage.output_tokens;
+          }
+        }
+      }
+
+      // Emit final chunk with done=true and token info
+      yield {
+        content: '',
+        done: true,
+        tokensUsed: inputTokens + outputTokens,
+        modelId
+      };
+
+      // Trace the completed stream
+      tracer?.record({
+        id: `llm-stream-response-${Date.now()}`,
+        timestamp: Date.now(),
+        level: 'info',
+        category: TraceCategory.LLM_RESPONSE,
+        component: 'AnthropicProvider',
+        operation: 'generateStream',
+        data: {
+          model: modelId,
+          contentLength: totalContent.length,
+          contentPreview: totalContent.substring(0, 200) + (totalContent.length > 200 ? '...' : ''),
+          inputTokens,
+          outputTokens,
+          totalTokens: inputTokens + outputTokens,
+          streaming: true
+        }
+      });
+
+    } catch (error) {
+      console.error('[AnthropicProvider:generateStream] Stream error:', error);
+
+      tracer?.record({
+        id: `llm-stream-error-${Date.now()}`,
+        timestamp: Date.now(),
+        level: 'error',
+        category: TraceCategory.LLM_ERROR,
+        component: 'AnthropicProvider',
+        operation: 'generateStream',
+        data: {
+          error: error instanceof Error ? error.message : String(error),
+          errorType: error instanceof Anthropic.APIError ? 'APIError' : 'UnknownError',
+          model: request.model,
+          streaming: true
+        }
+      });
+
+      throw error;
+    }
+  }
+
   estimateTokens(text: string): number {
     // Rough estimation: ~4 characters per token for Claude
     // In production, you'd use a proper tokenizer
@@ -354,11 +514,13 @@ export class AnthropicProvider implements LLMProvider {
   getCapabilities(): {
     supportsPrefill: boolean;
     supportsCaching: boolean;
+    supportsStreaming: boolean;
     maxContextLength?: number;
   } {
     return {
       supportsPrefill: true,
       supportsCaching: true,
+      supportsStreaming: true,
       maxContextLength: 200000 // Claude 3 context window
     };
   }

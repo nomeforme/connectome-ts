@@ -3,7 +3,7 @@
  * Simulates an agent that creates boxes via @element-control.createBox action
  */
 
-import { LLMProvider, LLMMessage, LLMResponse, LLMOptions } from './llm-interface';
+import { LLMProvider, LLMMessage, LLMResponse, LLMOptions, LLMStreamChunk } from './llm-interface';
 
 export class BoxTestMockProvider implements LLMProvider {
   name = 'box-test-mock';
@@ -74,7 +74,37 @@ export class BoxTestMockProvider implements LLMProvider {
   getCapabilities() {
     return {
       supportsPrefill: false,
-      supportsCaching: false
+      supportsCaching: false,
+      supportsStreaming: true
+    };
+  }
+
+  /**
+   * Streaming version - simulates streaming by breaking response into chunks
+   */
+  async *generateStream(
+    messages: LLMMessage[],
+    options?: LLMOptions
+  ): AsyncIterable<LLMStreamChunk> {
+    const response = await this.generate(messages, options);
+
+    // Break response into word chunks
+    const words = response.content.split(/(\s+)/);
+    for (const word of words) {
+      if (word.length > 0) {
+        yield {
+          content: word,
+          done: false
+        };
+      }
+    }
+
+    // Final chunk
+    yield {
+      content: '',
+      done: true,
+      tokensUsed: response.tokensUsed,
+      modelId: 'box-test-mock'
     };
   }
 }
