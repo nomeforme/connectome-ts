@@ -7,7 +7,8 @@
  * Listens to semantic events:
  * - action:completed - An action finished successfully
  * - action:failed - An action encountered an error
- * - panel:closed - A control panel was closed (agent should continue)
+ * - panel:toggled - A control panel was opened or closed (agent should continue)
+ * - debug:request-activation - Manual activation request from debug UI
  *
  * FLEX pattern:
  * - Events describe what happened (semantic)
@@ -35,9 +36,9 @@ interface ActionCompletedPayload {
   }>;
 }
 
-interface PanelClosedPayload {
+interface PanelToggledPayload {
   panelId: string;
-  streamId?: string;
+  state: 'opened' | 'closed';
 }
 
 export class ActivationDecider extends Component {
@@ -48,7 +49,7 @@ export class ActivationDecider extends Component {
   ];
 
   // Subscribe to all activation-worthy events
-  topics = ['action:completed', 'action:failed', 'panel:closed', 'debug:request-activation'];
+  topics = ['action:completed', 'action:failed', 'panel:toggled', 'debug:request-activation'];
 
   execute(context: ExecutionContext): void {
     const { event } = context;
@@ -61,8 +62,8 @@ export class ActivationDecider extends Component {
       case 'action:failed':
         this.handleActionFailed(event);
         break;
-      case 'panel:closed':
-        this.handlePanelClosed(event);
+      case 'panel:toggled':
+        this.handlePanelToggled(event);
         break;
       case 'debug:request-activation':
         this.handleDebugRequestActivation(event);
@@ -136,22 +137,24 @@ export class ActivationDecider extends Component {
     });
   }
 
-  private handlePanelClosed(event: any): void {
-    const payload = event.payload as PanelClosedPayload;
+  private handlePanelToggled(event: any): void {
+    const payload = event.payload as PanelToggledPayload;
     if (!payload) return;
 
-    const reason = 'Panel closed';
+    const reason = payload.state === 'opened'
+      ? 'Panel opened - new tools available'
+      : 'Panel closed';
 
-    console.log(`[ActivationDecider] Creating activation for panel:closed - ${reason}`);
+    console.log(`[ActivationDecider] Creating activation for panel:toggled (${payload.state}) - ${reason}`);
 
     const activation = createAgentActivation(reason, {
       id: `activation-panel-${payload.panelId}-${Date.now()}`,
       priority: 'normal',
-      source: 'panel-closed',
-      streamId: payload.streamId,
+      source: 'panel-toggled',
       metadata: {
         trigger: 'control-panel-toggle',
-        panelId: payload.panelId
+        panelId: payload.panelId,
+        panelState: payload.state
       }
     });
 

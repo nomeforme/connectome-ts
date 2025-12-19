@@ -145,8 +145,8 @@ export abstract class ControlPanelComponent extends InteractiveComponent {
     // Call subclass hook
     await this.onPanelOpened();
 
-    // Re-activate agent so it can continue with new tools visible
-    this.reactivateAgent('Panel opened - new tools available');
+    // Emit semantic panel:toggled event - ActivationDecider decides whether to activate
+    this.emitPanelToggled('opened');
   }
 
   /**
@@ -186,24 +186,22 @@ export abstract class ControlPanelComponent extends InteractiveComponent {
     // Call subclass hook
     await this.onPanelClosed();
 
-    // Re-activate agent
-    this.reactivateAgent('Panel closed');
+    // Emit semantic panel:toggled event - ActivationDecider decides whether to activate
+    this.emitPanelToggled('closed');
   }
 
   /**
-   * Re-activate the agent so it can continue its turn with updated context
+   * Emit panel:toggled event - agent may want to continue with updated context
    */
-  protected reactivateAgent(reason: string): void {
-    // Emit semantic panel:closed event - ActivationDecider decides whether to activate
-    // FLEX pattern: events describe what happened, transforms decide policy
-    console.log(`[ControlPanel:${this.getPanelId()}] Emitting panel:closed: ${reason}`);
+  protected emitPanelToggled(state: 'opened' | 'closed'): void {
+    console.log(`[ControlPanel:${this.getPanelId()}] Emitting panel:toggled (${state})`);
 
     this.emit({
-      topic: 'panel:closed',
+      topic: 'panel:toggled',
       timestamp: Date.now(),
       payload: {
         panelId: this.getPanelId(),
-        reason
+        state
       }
     });
   }
