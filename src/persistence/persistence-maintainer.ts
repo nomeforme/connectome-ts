@@ -48,6 +48,13 @@ export class PersistenceMaintainer extends Component {
 
     if (!frame) return;
 
+    // Skip streaming frames - they're lightweight incremental chunks that would
+    // flood persistence. The final content is captured in 'activation:completed'.
+    const isStreamingFrame = frame.events?.some(e => e.topic === 'activation:stream');
+    if (isStreamingFrame) {
+      return;
+    }
+
     // Save the frame delta (fire and forget)
     this.saveDelta(frame as Frame, frame.sequence).catch(err => {
       console.error('[PersistenceMaintainer] Failed to save delta:', err);
