@@ -305,7 +305,8 @@ export class BasicAgent implements AgentInterface {
    */
   async *runCycleStreaming(
     context: RenderedContext,
-    streamRef?: StreamRef
+    streamRef?: StreamRef,
+    abortSignal?: AbortSignal
   ): AsyncIterable<{
     chunk: string;
     done: boolean;
@@ -347,9 +348,15 @@ export class BasicAgent implements AgentInterface {
           maxTokens: this.config.defaultMaxTokens || 1000,
           temperature: this.config.defaultTemperature || 1.0,
           stopSequences: ['</my_turn>'],
-          formatConfig: this.buildFormatConfig()
+          formatConfig: this.buildFormatConfig(),
+          signal: abortSignal
         }
       )) {
+        // Check for abort before processing each chunk
+        if (abortSignal?.aborted) {
+          console.log('[BasicAgent] Stream aborted by signal');
+          return;
+        }
         totalChars += chunk.content.length;
 
         if (chunk.done) {

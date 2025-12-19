@@ -398,7 +398,21 @@ export class AnthropicProvider implements LLMProvider {
     });
 
     try {
+      // Check if already aborted before starting
+      if (options?.signal?.aborted) {
+        console.log('[AnthropicProvider:generateStream] Request aborted before start');
+        return;
+      }
+
       const stream = this.client.messages.stream(request);
+
+      // Set up abort handling if signal provided
+      if (options?.signal) {
+        options.signal.addEventListener('abort', () => {
+          console.log('[AnthropicProvider:generateStream] Abort signal received, aborting stream');
+          stream.controller.abort();
+        }, { once: true });
+      }
 
       let totalContent = '';
       let inputTokens = 0;
@@ -406,6 +420,12 @@ export class AnthropicProvider implements LLMProvider {
       let modelId = request.model;
 
       for await (const event of stream) {
+        // Check for abort between events
+        if (options?.signal?.aborted) {
+          console.log('[AnthropicProvider:generateStream] Stream aborted mid-flight');
+          return;
+        }
+
         if (event.type === 'content_block_delta') {
           const delta = event.delta;
           if (delta.type === 'text_delta') {

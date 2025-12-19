@@ -56,6 +56,11 @@ export interface LLMOptions {
   temperature?: number;
   modelId?: string;
   stopSequences?: string[];
+  /**
+   * AbortSignal for cancelling the LLM request (sync tool mode)
+   * When aborted, the stream should terminate early
+   */
+  signal?: AbortSignal;
   formatConfig?: {
     // Role-specific formatting for providers that need it
     assistant?: {
@@ -63,10 +68,10 @@ export interface LLMOptions {
       suffix?: string;      // e.g., "\n</my_turn>"
     };
     // Provider should add suffix as stop sequence if not already present
-    
+
     /**
      * Thinking mode configuration - enables chain-of-thought reasoning via prefill
-     * 
+     *
      * NOTE: This is NOT Anthropic's official Extended Thinking API (which uses budget_tokens
      * and is incompatible with prefill). This is "simulated thinking" - prefilling an opening
      * thinking tag to encourage the model to produce visible reasoning before responding.

@@ -30,6 +30,7 @@ import { getGlobalTracer, TraceStorage } from '../tracing';
 import { RenderedContext } from '../hud/types-v2';
 import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
 import { ActivationStreamPayload } from './response-handler';
+import { StreamAbortRegistry } from './stream-abort-registry';
 
 @persistable(1)
 export class AgentComponent extends Component implements RestorableComponent {
@@ -309,6 +310,9 @@ export class AgentComponent extends Component implements RestorableComponent {
 
   /**
    * Streaming agent cycle - emits activation:stream events for each chunk
+   *
+   * Registers with StreamAbortRegistry to allow ResponseHandler to interrupt
+   * the stream when a tool call is detected mid-stream (sync tool mode).
    */
   private async runAgentCycleStreaming(
     context: RenderedContext,
@@ -319,28 +323,65 @@ export class AgentComponent extends Component implements RestorableComponent {
     const agent = this.agent as BasicAgent;
     const effectiveStreamRef = streamRef || (streamId ? { streamId } as StreamRef : undefined);
 
+    // Register abort controller for this activation
+    const abortSignal = StreamAbortRegistry.register(activationId, this.id);
+
     let streamSequence = 0;
+    let aborted = false;
 
-    for await (const streamChunk of agent.runCycleStreaming(context, effectiveStreamRef)) {
-      const payload: ActivationStreamPayload = {
-        activationId,
-        agentId: this.id,
-        agentName: this.agentConfig?.name,
-        streamId,
-        streamType: streamRef?.streamType,
-        chunk: streamChunk.chunk,
-        done: streamChunk.done,
-        streamSequence: streamSequence++,
-        tokensUsed: streamChunk.tokensUsed,
-        modelId: streamChunk.modelId,
-        tools: (this.agent as any)?.tools
-      };
+    try {
+      for await (const streamChunk of agent.runCycleStreaming(context, effectiveStreamRef, abortSignal)) {
+        // Check if we've been aborted (tool call detected)
+        if (abortSignal.aborted) {
+          console.log(`[AgentComponent] Stream ${activationId} aborted by tool detection`);
+          aborted = true;
+          break;
+        }
 
-      this.emit({
-        topic: 'activation:stream',
-        timestamp: Date.now(),
-        payload
-      });
+        const payload: ActivationStreamPayload = {
+          activationId,
+          agentId: this.id,
+          agentName: this.agentConfig?.name,
+          streamId,
+          streamType: streamRef?.streamType,
+          chunk: streamChunk.chunk,
+          done: streamChunk.done,
+          streamSequence: streamSequence++,
+          tokensUsed: streamChunk.tokensUsed,
+          modelId: streamChunk.modelId,
+          tools: (this.agent as any)?.tools
+        };
+
+        this.emit({
+          topic: 'activation:stream',
+          timestamp: Date.now(),
+          payload
+        });
+
+        // Break if this was the final chunk
+        if (streamChunk.done) break;
+      }
+
+      // If aborted, emit a final done event so ResponseHandler can clean up
+      if (aborted) {
+        this.emit({
+          topic: 'activation:stream',
+          timestamp: Date.now(),
+          payload: {
+            activationId,
+            agentId: this.id,
+            agentName: this.agentConfig?.name,
+            streamId,
+            streamType: streamRef?.streamType,
+            chunk: '',
+            done: true,
+            streamSequence: streamSequence++
+          } as ActivationStreamPayload
+        });
+      }
+    } finally {
+      // Clean up the abort registration
+      StreamAbortRegistry.unregister(activationId);
     }
   }
 

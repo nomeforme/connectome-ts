@@ -8,14 +8,18 @@
  * full accumulated response, which is then parsed by ActivationCompletedReceptor
  * in a new full-weight frame.
  *
- * Future: This component will be extended to detect tool call tokens mid-stream
- * and trigger early interruption for synchronous tool execution.
+ * Sync Tool Mode: When toolMode='sync' (default), this component detects tool
+ * calls mid-stream and emits early activation:completed to interrupt the stream
+ * and execute tools synchronously. The agent continues with a new activation
+ * that includes the partial response and tool results.
  */
 
 import { Component } from '../spaces/component';
 import { ExecutionContext } from '../spaces/types';
 import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
 import { ActivationCompletedPayload } from './activation-completed-receptor';
+import { detectToolCall, DetectedToolCall } from './incremental-tool-detector';
+import { StreamAbortRegistry } from './stream-abort-registry';
 
 /**
  * Payload for activation:stream event
@@ -61,6 +65,18 @@ interface StreamState {
   streamType?: string;
   tools?: Map<string, any>;
   lastSequence: number;
+  /** Whether we've already emitted an interrupted completion for this stream */
+  interruptedEmitted: boolean;
+  /** Last scan position to avoid rescanning entire content */
+  lastScanPosition: number;
+}
+
+/**
+ * Configuration for ResponseHandler
+ */
+export interface ResponseHandlerConfig {
+  /** Tool execution mode: 'sync' (default) or 'async' */
+  toolMode?: 'sync' | 'async';
 }
 
 export class ResponseHandler extends Component {
@@ -68,6 +84,19 @@ export class ResponseHandler extends Component {
   topics = ['activation:stream'];
 
   private streams = new Map<string, StreamState>();
+  private toolMode: 'sync' | 'async';
+
+  constructor(config: ResponseHandlerConfig = {}) {
+    super();
+    this.toolMode = config.toolMode ?? 'sync';
+  }
+
+  /**
+   * Set tool mode dynamically (for testing or runtime configuration)
+   */
+  setToolMode(mode: 'sync' | 'async'): void {
+    this.toolMode = mode;
+  }
 
   execute(context: ExecutionContext): void {
     const { event } = context;
@@ -103,9 +132,17 @@ export class ResponseHandler extends Component {
         streamId,
         streamType,
         tools,
-        lastSequence: -1
+        lastSequence: -1,
+        interruptedEmitted: false,
+        lastScanPosition: 0
       };
       this.streams.set(activationId, streamState);
+    }
+
+    // If we've already emitted an interrupted completion, ignore further chunks
+    // (they'll arrive until the abort propagates)
+    if (streamState.interruptedEmitted) {
+      return;
     }
 
     // Accumulate chunks internally (this is the canonical accumulation)
@@ -116,13 +153,64 @@ export class ResponseHandler extends Component {
     // Update metadata that might change (tools could be updated)
     if (tools) streamState.tools = tools;
 
-    // Future: Scan accumulated content for tool call tokens here
-    // If detected, could emit an interruption event
+    // Sync tool mode: Scan for tool calls during streaming
+    if (this.toolMode === 'sync' && !done) {
+      const detection = detectToolCall(streamState.accumulated, this.toolMode);
+
+      if (detection.found && detection.toolCall) {
+        console.log(`[ResponseHandler] Tool call detected mid-stream: ${detection.toolCall.toolName}`);
+
+        // Mark as interrupted to ignore further chunks
+        streamState.interruptedEmitted = true;
+
+        // Signal the streaming agent to abort
+        StreamAbortRegistry.abort(activationId, `Tool call detected: ${detection.toolCall.toolName}`);
+
+        // Emit early activation:completed with interruption info
+        const completedPayload: ActivationCompletedPayload = {
+          activationId,
+          agentId: streamState.agentId,
+          agentName: streamState.agentName,
+          streamId: streamState.streamId,
+          streamType: streamState.streamType,
+          rawOutput: streamState.accumulated,
+          llmMetadata: {
+            tokensUsed: undefined, // Not available yet
+            model: modelId,
+            timestamp: new Date().toISOString()
+          },
+          tools: streamState.tools,
+          success: true,
+          // New fields for sync tool mode
+          interrupted: true,
+          partialContent: detection.contentBefore,
+          detectedToolCall: detection.toolCall
+        };
+
+        this.emit({
+          topic: 'activation:completed',
+          timestamp: Date.now(),
+          payload: completedPayload
+        });
+
+        // Note: Stream cleanup happens when abort completes (done=true arrives)
+        // or via explicit cleanup. Don't delete here - we need to track state
+        // to ignore remaining chunks.
+        return;
+      }
+    }
 
     if (done) {
       const streamState = this.streams.get(activationId);
       if (!streamState) {
         console.warn(`[ResponseHandler] Stream completed but no state found for ${activationId}`);
+        return;
+      }
+
+      // If we already emitted an interrupted completion, just clean up
+      if (streamState.interruptedEmitted) {
+        console.log(`[ResponseHandler] Stream ${activationId} done after interrupt, cleaning up`);
+        this.streams.delete(activationId);
         return;
       }
 

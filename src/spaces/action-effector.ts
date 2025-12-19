@@ -15,6 +15,7 @@ import {
 } from './receptor-effector-types';
 import { hasStateAspect } from '../veil/types';
 import { priorityConstraint, ComponentPriority } from './constraints';
+import { createActionResultFacet } from '../scripting/types';
 
 /**
  * Context passed to action handlers, including stream attribution
@@ -135,6 +136,19 @@ export class ActionEffector extends Component {
 
       if (!component) {
         console.warn(`[ActionEffector] Target component not found: ${targetId}`);
+
+        // Create action-result facet for component not found
+        const alias = (facet as any).state?.alias;
+        const actionResultFacet = createActionResultFacet(
+          `action-result:${facet.id}`,
+          facet.id,
+          null,  // parentActionId
+          { success: false, error: `Target component '${targetId}' not found`, message: `Component not found` },
+          actionContext.streamId,
+          actionContext.streamType,
+          alias
+        );
+        this.addOperation({ type: 'addFacet', facet: actionResultFacet });
         continue;
       }
 
@@ -147,13 +161,53 @@ export class ActionEffector extends Component {
         console.log(`[ActionEffector] Calling component action handler for '${action}' with context:`, actionContext);
         try {
           // Pass action context as second parameter for stream attribution
-          await handler(parameters, actionContext);
+          const result = await handler(parameters, actionContext);
           console.log(`[ActionEffector] Successfully executed action via component handler`);
+
+          // Create action-result facet for success
+          const alias = (facet as any).state?.alias;
+          const actionResultFacet = createActionResultFacet(
+            `action-result:${facet.id}`,
+            facet.id,
+            null,  // parentActionId
+            { success: true, result, message: `Action '${toolName}' completed` },
+            actionContext.streamId,
+            actionContext.streamType,
+            alias
+          );
+          this.addOperation({ type: 'addFacet', facet: actionResultFacet });
         } catch (error) {
           console.error(`[ActionEffector] Error executing component action:`, error);
+
+          // Create action-result facet for failure
+          const alias = (facet as any).state?.alias;
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          const actionResultFacet = createActionResultFacet(
+            `action-result:${facet.id}`,
+            facet.id,
+            null,  // parentActionId
+            { success: false, error: errorMessage, message: `Action '${toolName}' failed` },
+            actionContext.streamId,
+            actionContext.streamType,
+            alias
+          );
+          this.addOperation({ type: 'addFacet', facet: actionResultFacet });
         }
       } else {
         console.warn(`[ActionEffector] No handler found for action '${action}' on component '${targetId}'`);
+
+        // Create action-result facet for handler not found
+        const alias = (facet as any).state?.alias;
+        const actionResultFacet = createActionResultFacet(
+          `action-result:${facet.id}`,
+          facet.id,
+          null,  // parentActionId
+          { success: false, error: `No handler found for action '${action}'`, message: `Action handler not found` },
+          actionContext.streamId,
+          actionContext.streamType,
+          alias
+        );
+        this.addOperation({ type: 'addFacet', facet: actionResultFacet });
       }
     }
   }
