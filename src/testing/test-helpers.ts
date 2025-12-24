@@ -239,7 +239,7 @@ export class DebugServerClient {
     if (state.space?.components) {
       components.push(...state.space.components.map((c: any) => ({
         name: c.type,
-        type: c.martemPhase || 'component',
+        type: c.componentType || 'component',
         id: c.id,
         componentId: c.id
       })));
@@ -251,7 +251,7 @@ export class DebugServerClient {
         if (child.components) {
           components.push(...child.components.map((c: any) => ({
             name: c.type,
-            type: c.martemPhase || 'component',
+            type: c.componentType || 'component',
             id: c.id,
             componentId: child.id
           })));

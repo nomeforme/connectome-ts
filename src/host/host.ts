@@ -5,7 +5,7 @@
 import { Space } from '../spaces/space';
 import { VEILStateManager } from '../veil/veil-state';
 import { TransitionManager } from '../persistence/transition-manager';
-import { PersistenceMaintainer } from '../persistence/persistence-maintainer';
+import { PersistenceManager } from '../persistence/persistence-maintainer';
 import { FileStorageAdapter } from '../persistence/file-storage';
 import { DebugServer } from '../debug/debug-server';
 import { LLMProvider } from '../llm/llm-interface';
@@ -167,13 +167,13 @@ export class ConnectomeHost {
       );
 
       // Mount persistence maintainer (auto-registration handles the rest!)
-      const persistenceMaintainer = new PersistenceMaintainer(veilState, space, {
+      const persistenceMaintainer = new PersistenceManager(veilState, space, {
         storagePath: this.config.persistence.storageDir || './connectome-state',
         snapshotInterval: this.config.persistence.snapshotInterval || 100
       });
 
       // Mount directly
-      space.addComponent(persistenceMaintainer, 'infrastructure:PersistenceMaintainer');
+      space.addComponent(persistenceMaintainer, 'infrastructure:PersistenceManager');
 
       // Store reference for debug server frame deletion
       (space as any).persistence = persistenceMaintainer;
@@ -556,7 +556,7 @@ export class ConnectomeHost {
     // These should not be restored from facets
     const infrastructureTypes = new Set([
       'ComponentManager',
-      'PersistenceMaintainer',
+      'PersistenceManager',
       'VEILOperationReceptor',
       'HostHandlerComponent'
     ]);

@@ -855,7 +855,7 @@ export class BasicAgent implements AgentInterface {
   
   private buildContext(state: VEILState, streamRef?: StreamRef): RenderedContext {
     // Note: Pending activations removed - activation facets remain in state
-    // Note: No compression engine - compression is handled by CompressionTransform + ContextTransform in RETM architecture
+    // Note: No compression engine - compression is handled by CompressionTransform + ContextRenderer in RETM architecture
     
     // Render using HUD (without compression)
     return this.hud.render(

@@ -19,18 +19,12 @@ import { DebugServer, DebugServerConfig } from '../debug/debug-server';
 import { deterministicUUID } from '../utils/uuid';
 import { performance } from 'perf_hooks';
 import { 
-  Modulator,
-  Receptor, 
-  Transform, 
-  Effector, 
   FacetDelta, 
   ReadonlyVEILState,
-  EffectorResult,
-  FacetFilter,
-  Maintainer
-} from './receptor-effector-types';
+  FacetFilter
+} from './component-types';
 import { VEILOperationReceptor } from './migration-adapters';
-import { ActivationCompletedReceptor } from '../agent/activation-completed-receptor';
+import { ActivationCompletedHandler } from '../agent/activation-completed-receptor';
 import { groupByPriority } from '../utils/priorities';
 // Legacy RETM type guards - kept for backwards compatibility but not used in FLEX
 // import { isReceptor, isTransform, isEffector, isMaintainer, isModulator } from '../utils/retm-type-guards';
@@ -210,7 +204,7 @@ export class Space {
     const veilOpReceptor = new VEILOperationReceptor();
     this.addComponent(veilOpReceptor);
 
-    const activationCompletedReceptor = new ActivationCompletedReceptor();
+    const activationCompletedReceptor = new ActivationCompletedHandler();
     this.addComponent(activationCompletedReceptor);
   }
   
@@ -338,7 +332,7 @@ export class Space {
     
     // Sort by priority if no explicit position constraints were used to force order?
     // Or always sort? If we sort, 'after'/'before' might be lost if priorities conflict.
-    // For Phase 3, let's assume priority dominates unless explicit position is given.
+    // Let's assume priority dominates unless explicit position is given.
     // If we didn't insert at specific index, we sort.
     if (insertIndex === -1) {
       this.sortComponents();
@@ -348,7 +342,7 @@ export class Space {
     this.updateConstraintFacetsForComponent(id, component);
 
     // Mount to Space
-    // _attach will call onInit, onMount/onRestore, and auto-register MARTEMs
+    // _attach will call onInit, onMount/onRestore
     // We don't await it here to match synchronous add behavior, but it handles async init internally
     component
       ._attach(this, id, isRestoring)
@@ -812,9 +806,7 @@ export class Space {
       // Record processed event in frame
       frame.events = [event];
       
-      // Emit frame:start (this is a system event, handled specially?)
-      // Or just process components.
-      // In Phase 3, we iterate components for THIS event.
+      // Process components sequentially for this event.
       // Prepare execution context for component execution
       const context = {
         event,

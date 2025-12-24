@@ -26,7 +26,7 @@ export * from './types';
 export { LuaSandbox, createLuaSandbox, LuaExecutionResult } from './lua-sandbox';
 
 // Script Executor
-export { ScriptExecutorEffector, createScriptExecutor } from './script-executor';
+export { ScriptRunner, createScriptExecutor } from './script-executor';
 
 // Action Result Processor (Maintainer that emits action:completed events)
 export { ActionResultProcessor } from './action-result-processor';

@@ -1,6 +1,6 @@
 import { Component } from '../spaces/component';
 import { ExecutionContext } from '../spaces/types';
-import { ReadonlyVEILState, SpaceEvent, FacetDelta } from '../spaces/receptor-effector-types';
+import { ReadonlyVEILState, SpaceEvent, FacetDelta } from '../spaces/component-types';
 import { TransitionNode } from './transition-types';
 import { VEILStateManager } from '../veil/veil-state';
 import { Frame } from '../veil/types';
@@ -117,7 +117,7 @@ export class TransitionMaintainer extends Component {
       facetCount: state.facets.size,
       streamCount: state.streams.size,
       agentCount: state.agents.size,
-      // We don't save full state here - that's PersistenceMaintainer's job
+      // We don't save full state here - that's PersistenceManager's job
       // This is just for transition tracking
     }, null, 2));
     

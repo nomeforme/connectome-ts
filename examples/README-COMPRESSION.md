@@ -1,6 +1,6 @@
 # Compression Examples
 
-This directory contains examples demonstrating compression with the RETM architecture.
+This directory contains examples demonstrating compression with Connectome's component architecture.
 
 ## Running the Examples
 
@@ -53,7 +53,7 @@ const compressionTransform = new CompressionTransform({
 
 space.addTransform(compressionTransform);
 
-const contextTransform = new ContextTransform(
+const contextTransform = new ContextRenderer(
   veilState,
   compressionEngine,
   { maxTokens: 1000 }
@@ -87,19 +87,19 @@ space.addEffector(agentEffector);
 ```
 User sends message
   ↓
-Phase 1: Receptors convert to facets
+Priority 100-199: Receptors convert to facets
   ↓
-Phase 2: Transforms run (in priority order)
+Priority 200-299: Transforms run (in priority order)
   ├─ CompressionTransform (priority=10)
   │  └─ Identifies compressible ranges
   │  └─ Compresses old frames
   │  └─ Creates compression-result facets
-  └─ ContextTransform (priority=100)
+  └─ ContextRenderer (priority=100)
      └─ Renders context for activations
      └─ Uses compressed frames from engine cache
      └─ Creates rendered-context facets
   ↓
-Phase 3: Effectors process facet changes
+Priority 300-399: Effectors process facet changes
   └─ AgentEffector
      └─ Sees activation + rendered-context pair
      └─ Runs agent with context
@@ -223,7 +223,7 @@ space.addTransform(new MyTransform());
 
 ## Additional Resources
 
-- [Compression RETM Guide](../docs/compression-retm-guide.md)
+- [Compression Guide](../docs/compression-retm-guide.md)
 - [Transform Ordering](../docs/transform-ordering.md)
-- [RETM Architecture](../docs/retm-architecture.md)
+- [FLEX Architecture](../FLEX-ARCHITECTURE-COMPLETE.md)
 

@@ -16,7 +16,7 @@ import {
   Element,
   createEventFacet
 } from '../src';
-import { SpaceEvent, ReadonlyVEILState } from '../src/spaces/receptor-effector-types';
+import { SpaceEvent, ReadonlyVEILState } from '../src/spaces/component-types';
 import { VEILDelta } from '../src/veil/types';
 
 async function main() {

@@ -274,9 +274,9 @@ Expected output:
 ## Architecture Notes
 
 **Why priority 200?**
-- Runs late in Phase 2
+- Runs late in transform range (200-299)
 - Other transforms have stabilized state
-- Captures "final" rendering before effectors run
+- Captures "final" rendering before effectors run (300-399)
 
 **Why side effect on frame?**
 - Snapshots are frame metadata, not VEIL deltas

@@ -13,7 +13,7 @@ import { ExecutionContext } from '../spaces/types';
 import { priorityConstraint } from '../spaces/constraints';
 
 export class ActiveStreamTransform extends Component {
-  // Early in execution, before rendering (ContextTransform is 200)
+  // Early in execution, before rendering (ContextRenderer is 200)
   constraints = [priorityConstraint(50)];
 
   execute(context: ExecutionContext): void {

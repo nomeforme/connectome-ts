@@ -2,7 +2,7 @@
 
 **Branch:** `flex-refactor`
 **Status:** Phase 4 Complete (Constraint-based Priority)
-**Architecture Status:** Active (Replaces MARTEM)
+**Architecture Status:** Active
 **Date:** November 2025
 
 ---
@@ -25,7 +25,7 @@
 
 ## Executive Summary
 
-FLEX (Flat List Execution) is Connectome's simplified event processing architecture that replaces the complex MARTEM phase-based system. It eliminates the Element tree hierarchy and phase boundaries in favor of a single, priority-ordered flat list of components that execute sequentially.
+FLEX (Flat List Execution) is Connectome's event processing architecture that uses a single, priority-ordered flat list of components executing sequentially. It eliminates tree hierarchy traversal and phase boundaries in favor of immediate state visibility.
 
 ### Key Benefits
 
@@ -38,19 +38,16 @@ FLEX (Flat List Execution) is Connectome's simplified event processing architect
 ### Architecture at a Glance
 
 ```typescript
-// MARTEM (Old): Complex tree + phase-based batching
-space (Element)
-  └─ agent-element (Element)
-      ├─ MessageReceptor (Component, Phase 1)
-      ├─ ContextTransform (Component, Phase 2)
-      └─ ResponseEffector (Component, Phase 3)
+// Historical (phase-based batching): Components grouped by type
+// Phase 1: All Receptors → Phase 2: All Transforms → Phase 3: All Effectors
 
-// FLEX (New): Simple flat constraint-ordered list
+// FLEX (current): Flat constraint-ordered list with immediate visibility
 space.components = [
   MessageReceptor (constraint: priority 100),
-  ContextTransform (constraint: priority 200),
+  ContextRenderer (constraint: priority 200),
   ResponseEffector (constraint: priority 300)
 ]
+// Each component sees changes from all earlier components in same frame
 ```
 
 ---
@@ -236,7 +233,7 @@ Components are organized into logical groups by priority constraint:
 |----------|------|---------|-------------------|
 | **0-99** | **Modulators** | Event preprocessing | EventFilter, EventAggregator, RateLimiter |
 | **100-199** | **Receptors** | Event → VEIL facets | MessageReceptor, CommandReceptor |
-| **200-299** | **Transforms** | VEIL processing | ContextTransform, StateReducer |
+| **200-299** | **Transforms** | VEIL processing | ContextRenderer, StateReducer |
 | **300-399** | **Effectors** | Side effects | ResponseEffector, DatabaseWriter |
 | **400-499** | **Maintainers** | Cleanup & persistence | StatePersister, MetricsCollector |
 
@@ -339,11 +336,11 @@ bufferedEvents.clear();
 
 ---
 
-## Migration from MARTEM
+## Historical Context: Evolution from Phases
 
 ### Backward Compatibility
 
-FLEX maintains compatibility through base classes that act as shims:
+The system maintains compatibility with older code patterns through base classes:
 
 ```typescript
 // Legacy MARTEM-style component
@@ -364,7 +361,7 @@ class MyReceptor extends BaseReceptor {
 // - Subscription checking (though less efficient)
 ```
 
-**Note**: The legacy base classes are deprecated. Prefer using `Component` directly with explicit constraints.
+**Note**: The legacy base classes provided backward compatibility during migration. Modern code should use `Component` directly with explicit constraints.
 
 ### Migration Path
 
@@ -471,7 +468,7 @@ const space = new Space();
 
 // Add components directly (no tree structure)
 space.addComponent(new MessageReceptor());      // constraint: priority 100
-space.addComponent(new ContextTransform());     // constraint: priority 200
+space.addComponent(new ContextRenderer());     // constraint: priority 200
 space.addComponent(new ResponseEffector());     // constraint: priority 300
 
 // Components automatically sorted by priority constraint

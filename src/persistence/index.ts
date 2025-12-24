@@ -5,7 +5,7 @@
 export * from './types';
 export * from './decorators';
 export * from './serialization';
-// PersistenceManager removed - use PersistenceMaintainer instead
+// PersistenceManager removed - use PersistenceManager instead
 export * from './persistence-maintainer';
 export * from './file-storage';
 export * from './restoration';
@@ -14,7 +14,7 @@ export * from './transition-maintainer';
 
 // Re-export commonly used items
 export { persistent, persistable, Serializers } from './decorators';
-export { PersistenceMaintainer } from './persistence-maintainer';
+export { PersistenceManager } from './persistence-maintainer';
 export { ComponentRegistry } from './component-registry';
 export { restoreFromSnapshot } from './restoration';
 export { TransitionManager } from './transition-manager';

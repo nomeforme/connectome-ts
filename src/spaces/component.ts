@@ -433,7 +433,7 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
       );
     }
     
-    // Phase 3: Apply immediately via Space
+    // Apply immediately via Space
     if ('applyOperation' in this.space) {
       (this.space as any).applyOperation(operation);
       return;

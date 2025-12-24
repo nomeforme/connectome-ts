@@ -1,20 +1,20 @@
-# Compression in RETM Architecture
+# Compression Guide
 
-This guide shows how to use the compression system with the new RETM (Receptor/Effector/Transform/Maintainer) architecture.
+This guide shows how to use the compression system with Connectome's component architecture.
 
 ## Overview
 
-Compression in Connectome is now handled by **Transforms** that run during Phase 2 of frame processing. This decouples compression from agents and makes it a shared infrastructure concern.
+Compression in Connectome is handled by **Transform components** (priority 200-299) that run during frame processing. This decouples compression from agents and makes it shared infrastructure.
 
 ### The Flow
 
 ```
-Frame Processing:
-Phase 1: Events → VEIL (Receptors)
-Phase 2: VEIL → VEIL (Transforms)
-  ├── CompressionTransform: Compresses old frames, updates engine cache
-  └── ContextTransform: Renders context for agents (using compressed frames)
-Phase 3: VEIL Changes → Side Effects (Effectors)
+Frame Processing (Sequential):
+Priority 100-199: Events → VEIL (Receptors)
+Priority 200-299: VEIL → VEIL (Transforms)
+  ├── CompressionTransform (priority 10): Compresses old frames, updates engine cache
+  └── ContextRenderer (priority 100): Renders context for agents (using compressed frames)
+Priority 300-399: VEIL Changes → Side Effects (Effectors)
   └── AgentEffector: Runs agent with pre-rendered context
 ```
 
@@ -40,7 +40,7 @@ const compressionEngine = new AttentionAwareCompressionEngine();
 ```typescript
 import { 
   CompressionTransform,
-  ContextTransform,
+  ContextRenderer,
   Space,
   VEILStateManager
 } from 'connectome-ts';
@@ -48,7 +48,7 @@ import {
 const veilState = new VEILStateManager();
 const space = new Space(veilState);
 
-// Add CompressionTransform (priority=10, runs first in Phase 2)
+// Add CompressionTransform (priority=10, runs first among transforms)
 const compressionTransform = new CompressionTransform({
   engine: compressionEngine,
   engineName: 'attention-aware',
@@ -61,8 +61,8 @@ const compressionTransform = new CompressionTransform({
 
 space.addTransform(compressionTransform);
 
-// Add ContextTransform (priority=100, runs after compression)
-const contextTransform = new ContextTransform(
+// Add ContextRenderer (priority=100, runs after compression)
+const contextTransform = new ContextRenderer(
   veilState,
   compressionEngine,  // Same engine instance!
   {
@@ -74,7 +74,7 @@ const contextTransform = new ContextTransform(
 space.addTransform(contextTransform);
 
 // Note: Transforms with priority run before those without
-// CompressionTransform (10) → ContextTransform (100) → unprioritized transforms
+// CompressionTransform (10) → ContextRenderer (100) → unprioritized transforms
 ```
 
 ### 3. Create Agent (No Compression Needed!)
@@ -93,7 +93,7 @@ const agent = new BasicAgent(
   veilState
 );
 
-// Use AgentEffector to connect agent to RETM architecture
+// Use AgentEffector to connect agent to component architecture
 const agentEffector = new AgentEffector(agentElement, agent);
 space.addEffector(agentEffector);
 ```
@@ -108,7 +108,7 @@ space.addEffector(agentEffector);
 4. **Creates** compression-plan and compression-result facets
 5. **Populates** engine cache with replacements
 
-### ContextTransform
+### ContextRenderer
 
 1. **Watches** for agent-activation facets
 2. **Renders** context using FrameTrackingHUD
@@ -161,7 +161,7 @@ import {
   BasicAgent,
   AgentEffector,
   CompressionTransform,
-  ContextTransform,
+  ContextRenderer,
   AttentionAwareCompressionEngine,
   Element
 } from 'connectome-ts';
@@ -173,19 +173,19 @@ const space = new Space(veilState);
 // Compression engine (shared instance)
 const compressionEngine = new AttentionAwareCompressionEngine();
 
-// Phase 2 Transforms
+// Transforms (priority 200-299)
 space.addTransform(new CompressionTransform({
   engine: compressionEngine,
   triggerThreshold: 500
 }));
 
-space.addTransform(new ContextTransform(
+space.addTransform(new ContextRenderer(
   veilState,
   compressionEngine,
   { maxTokens: 4000 }
 ));
 
-// Agent (Phase 3)
+// Agent (Effector priority 300-399)
 const agentElement = new Element('agent-1', 'agent');
 space.mountElement(agentElement);
 
@@ -205,7 +205,7 @@ space.addEffector(agentEffector);
 // Now when agent-activation facets are created,
 // the system will automatically:
 // 1. Compress old frames (CompressionTransform)
-// 2. Render context with compression (ContextTransform)
+// 2. Render context with compression (ContextRenderer)
 // 3. Run agent with rendered context (AgentEffector)
 ```
 
@@ -223,12 +223,12 @@ const agent = new BasicAgent(
 );
 ```
 
-### After (RETM Transforms)
+### After (Transform Components)
 
 ```typescript
 // New way - transforms handle compression
 space.addTransform(new CompressionTransform({ engine: compressionEngine }));
-space.addTransform(new ContextTransform(veilState, compressionEngine));
+space.addTransform(new ContextRenderer(veilState, compressionEngine));
 
 const agent = new BasicAgent(config, provider, veilState);
 // Agent doesn't need compression - it's handled by transforms!
@@ -272,7 +272,7 @@ Compression creates facets that you can observe:
 }
 ```
 
-## Benefits of RETM Compression
+## Benefits of Component-Based Compression
 
 1. **Separation of Concerns**: Agents don't manage compression
 2. **Reusability**: One compression engine serves all agents

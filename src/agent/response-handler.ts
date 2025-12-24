@@ -5,7 +5,7 @@
  *
  * This component listens to activation:stream events and accumulates the chunks.
  * When a stream completes (done=true), it emits activation:completed with the
- * full accumulated response, which is then parsed by ActivationCompletedReceptor
+ * full accumulated response, which is then parsed by ActivationCompletedHandler
  * in a new full-weight frame.
  *
  * Sync Tool Mode: When toolMode='sync' (default), this component detects tool

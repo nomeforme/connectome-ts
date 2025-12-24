@@ -20,7 +20,7 @@ import {
   FacetDelta,
   FacetFilter,
   Frame
-} from '../src/spaces/receptor-effector-types';
+} from '../src/spaces/component-types';
 import { VEILDelta, Facet } from '../src/veil/types';
 
 /**

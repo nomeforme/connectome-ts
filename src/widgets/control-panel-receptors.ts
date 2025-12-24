@@ -14,7 +14,7 @@ import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
  * Receptor that creates action-definition and instruction facets
  * when panel tools are registered (declarative pattern)
  */
-export class ControlPanelActionsReceptor extends Component {
+export class ControlPanelActionsListener extends Component {
   constraints = [priorityConstraint(ComponentPriority.RECEPTOR)];
   topics = ['panel:tools-registered'];
 
@@ -24,11 +24,11 @@ export class ControlPanelActionsReceptor extends Component {
 
     const payload = event.payload as any;
     if (!payload || !payload.tools || !Array.isArray(payload.tools)) {
-      console.warn('[ControlPanelActionsReceptor] Invalid payload - missing tools array');
+      console.warn('[ControlPanelActionsListener] Invalid payload - missing tools array');
       return;
     }
 
-    console.log('[ControlPanelActionsReceptor] Panel tools registered:', {
+    console.log('[ControlPanelActionsListener] Panel tools registered:', {
       panelId: payload.panelId,
       componentId: payload.componentId,
       toolCount: payload.tools.length
@@ -140,7 +140,7 @@ export class ControlPanelActionsReceptor extends Component {
       facetCount += 2;
     }
 
-    console.log(`[ControlPanelActionsReceptor] Created ${facetCount} facets for panel ${payload.panelId}`);
+    console.log(`[ControlPanelActionsListener] Created ${facetCount} facets for panel ${payload.panelId}`);
   }
 }
 
