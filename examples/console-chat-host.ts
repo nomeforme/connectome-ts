@@ -4,9 +4,9 @@
  * 
  * Demonstrates:
  * - ConsoleAfferent (external input via readline)
- * - ConsoleMessageReceptor (events → facets)
- * - ConsoleSpeechEffector (speech → console output)
- * - AgentEffector + ContextTransform (agent processing)
+ * - ConsoleInbound (events → facets)
+ * - ConsoleOutbound (speech → console output)
+ * - AgentEffector + ContextRenderer (agent processing)
  * - Component-state management (VEIL-based persistence)
  * - Full Host infrastructure
  * 
@@ -22,11 +22,11 @@ import {
   VEILStateManager,
   Element,
   ConsoleAfferent,
-  ConsoleMessageReceptor,
-  ConsoleSpeechEffector,
+  ConsoleInbound,
+  ConsoleOutbound,
   AgentEffector,
   BasicAgent,
-  ContextTransform,
+  ContextRenderer,
   AnthropicProvider,
   MockLLMProvider,
   ComponentRegistry,
@@ -34,7 +34,7 @@ import {
   ElementTreeMaintainer
 } from '../src';
 import { ConnectomeApplication } from '../src/host/types';
-import { AfferentContext } from '../src/spaces/receptor-effector-types';
+import { AfferentContext } from '../src/spaces/component-types';
 
 class ConsoleApplication implements ConnectomeApplication {
   async createSpace(hostRegistry?: Map<string, any>): Promise<{ space: Space; veilState: VEILStateManager }> {
@@ -54,7 +54,7 @@ class ConsoleApplication implements ConnectomeApplication {
     space.addMaintainer(new ElementTreeMaintainer(space));
     
     // Add console receptors/effectors
-    space.addReceptor(new ConsoleMessageReceptor());
+    space.addReceptor(new ConsoleInbound());
     
     // Create console element via VEIL
     space.emit({
@@ -100,7 +100,7 @@ class ConsoleApplication implements ConnectomeApplication {
     await consoleAfferent.start();
     
     // Add speech effector with reference to afferent
-    space.addEffector(new ConsoleSpeechEffector(consoleAfferent));
+    space.addEffector(new ConsoleOutbound(consoleAfferent));
     
     // Create agent element (for persistence, create via VEIL)
     const agentElem = new Element('agent');
@@ -128,7 +128,7 @@ Be concise and friendly. You can use markdown formatting in your responses.`
     // Add agent processing pipeline
     space.addEffector(new AgentEffector(agentElem, agent));
     
-    const contextTransform = new ContextTransform(veilState);
+    const contextTransform = new ContextRenderer(veilState);
     await contextTransform.mount(space); // Mount auto-registers with Space
     
     console.log('✅ Console Chat initialized\n');

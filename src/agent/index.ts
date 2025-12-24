@@ -6,7 +6,7 @@ export { BasicAgent } from './basic-agent';
 export { AgentComponent, AgentEffector } from './agent-component';
 
 // Agent receptors
-export { ActivationCompletedReceptor, ActivationCompletedPayload } from './activation-completed-receptor';
+export { ActivationCompletedHandler, ActivationCompletedPayload } from './activation-completed-receptor';
 
 // Streaming support
 export { ResponseHandler, ActivationStreamPayload } from './response-handler';

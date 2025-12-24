@@ -8,7 +8,7 @@
 import { Component } from './component';
 import { ExecutionContext, SpaceEvent } from './types';
 import { VEILDelta } from '../veil/types';
-import { ReadonlyVEILState } from './receptor-effector-types';
+import { ReadonlyVEILState } from './component-types';
 import { priorityConstraint, ComponentPriority } from './constraints';
 
 /**

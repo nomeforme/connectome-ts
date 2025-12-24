@@ -1,5 +1,5 @@
 /**
- * PersistenceMaintainer - Handles persistence of VEIL state
+ * PersistenceManager - Handles persistence of VEIL state
  *
  * FLEX Component (constraint: priority 400) that runs after all other processing is complete.
  */
@@ -14,13 +14,13 @@ import { Frame } from '../veil/types';
 import { Space } from '../spaces/space';
 import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
 
-export interface PersistenceMaintainerConfig {
+export interface PersistenceManagerConfig {
   storagePath: string;
   snapshotInterval?: number; // Default: every 100 frames
   maxDeltasPerFile?: number; // Default: 1000
 }
 
-export class PersistenceMaintainer extends Component {
+export class PersistenceManager extends Component {
   constraints = [priorityConstraint(ComponentPriority.MAINTAINER)];
 
   private storage: FileStorageAdapter;
@@ -29,12 +29,12 @@ export class PersistenceMaintainer extends Component {
   // Named 'rootSpace' to avoid conflict with Component.space getter
   private rootSpace: Space;
   private veilState: VEILStateManager;
-  private config: PersistenceMaintainerConfig;
+  private config: PersistenceManagerConfig;
 
   constructor(
     veilState: VEILStateManager,
     space: Space,
-    config: PersistenceMaintainerConfig
+    config: PersistenceManagerConfig
   ) {
     super();
     this.veilState = veilState;
@@ -57,7 +57,7 @@ export class PersistenceMaintainer extends Component {
 
     // Save the frame delta (fire and forget)
     this.saveDelta(frame as Frame, frame.sequence).catch(err => {
-      console.error('[PersistenceMaintainer] Failed to save delta:', err);
+      console.error('[PersistenceManager] Failed to save delta:', err);
     });
 
     // Check if we need a snapshot
@@ -65,7 +65,7 @@ export class PersistenceMaintainer extends Component {
     const currentSequence = this.veilState.getState().currentSequence;
     if (currentSequence - this.lastSnapshotSequence >= snapshotInterval) {
       this.createSnapshot(currentSequence).catch(err => {
-        console.error('[PersistenceMaintainer] Failed to create snapshot:', err);
+        console.error('[PersistenceManager] Failed to create snapshot:', err);
       });
       this.lastSnapshotSequence = currentSequence;
     }
@@ -120,6 +120,6 @@ export class PersistenceMaintainer extends Component {
 
     await this.storage.saveSnapshot(snapshot);
     this.lastSnapshotSequence = snapshotSequence;
-    console.log(`[PersistenceMaintainer] Created snapshot at sequence ${snapshotSequence}`);
+    console.log(`[PersistenceManager] Created snapshot at sequence ${snapshotSequence}`);
   }
 }

@@ -1,5 +1,5 @@
 /**
- * ActionEffector - Executes component handlers when action facets are created
+ * ActionRouter - Executes component handlers when action facets are created
  *
  * FLEX Component (constraint: priority 300) that watches for action facets created by agents
  * and routes them to the appropriate component handlers for execution.
@@ -10,9 +10,8 @@ import { ExecutionContext, SpaceEvent } from './types';
 import {
   FacetDelta,
   ReadonlyVEILState,
-  FacetFilter,
-  ExternalAction
-} from './receptor-effector-types';
+  FacetFilter
+} from './component-types';
 import { hasStateAspect } from '../veil/types';
 import { priorityConstraint, ComponentPriority } from './constraints';
 import { createActionResultFacet } from '../scripting/types';
@@ -34,7 +33,7 @@ export interface ActionContext {
   agentName?: string;
 }
 
-export class ActionEffector extends Component {
+export class ActionRouter extends Component {
   constraints = [priorityConstraint(ComponentPriority.EFFECTOR)];
 
   // Watch for action facets
@@ -88,18 +87,18 @@ export class ActionEffector extends Component {
         agentName: (facet as any).agentName
       };
 
-      // Skip actions handled by other effectors (e.g., ScriptExecutorEffector handles 'lua')
+      // Skip actions handled by other effectors (e.g., ScriptRunner handles 'lua')
       const specialActions = ['lua'];
       if (specialActions.includes(toolName)) {
         continue;
       }
 
-      console.log(`[ActionEffector] Processing action facet: ${toolName}`, parameters);
+      console.log(`[ActionRouter] Processing action facet: ${toolName}`, parameters);
 
       // Parse tool name to extract target ID and action
       const parts = toolName.split('.');
       if (parts.length < 2) {
-        console.warn(`[ActionEffector] Invalid tool name format: ${toolName} (expected "targetId.action")`);
+        console.warn(`[ActionRouter] Invalid tool name format: ${toolName} (expected "targetId.action")`);
         continue;
       }
 
@@ -108,7 +107,7 @@ export class ActionEffector extends Component {
 
       const space = this.space;
       if (!space) {
-        console.warn(`[ActionEffector] No space found for action routing`);
+        console.warn(`[ActionRouter] No space found for action routing`);
         continue;
       }
 
@@ -129,13 +128,13 @@ export class ActionEffector extends Component {
         if (actualComponentId) {
           component = space.getComponentById(actualComponentId);
           if (component) {
-            console.log(`[ActionEffector] Resolved '${targetId}' to '${actualComponentId}' via action-definition`);
+            console.log(`[ActionRouter] Resolved '${targetId}' to '${actualComponentId}' via action-definition`);
           }
         }
       }
 
       if (!component) {
-        console.warn(`[ActionEffector] Target component not found: ${targetId}`);
+        console.warn(`[ActionRouter] Target component not found: ${targetId}`);
 
         // Create action-result facet for component not found
         const alias = (facet as any).state?.alias;
@@ -152,17 +151,17 @@ export class ActionEffector extends Component {
         continue;
       }
 
-      console.log(`[ActionEffector] Found target component: ${component.constructor.name} (${component.id})`);
+      console.log(`[ActionRouter] Found target component: ${component.constructor.name} (${component.id})`);
 
       // Execute action on component
       const comp = component as any;
       if (comp.actions && comp.actions.has && comp.actions.has(action)) {
         const handler = comp.actions.get(action);
-        console.log(`[ActionEffector] Calling component action handler for '${action}' with context:`, actionContext);
+        console.log(`[ActionRouter] Calling component action handler for '${action}' with context:`, actionContext);
         try {
           // Pass action context as second parameter for stream attribution
           const result = await handler(parameters, actionContext);
-          console.log(`[ActionEffector] Successfully executed action via component handler`);
+          console.log(`[ActionRouter] Successfully executed action via component handler`);
 
           // Create action-result facet for success
           const alias = (facet as any).state?.alias;
@@ -177,7 +176,7 @@ export class ActionEffector extends Component {
           );
           this.addOperation({ type: 'addFacet', facet: actionResultFacet });
         } catch (error) {
-          console.error(`[ActionEffector] Error executing component action:`, error);
+          console.error(`[ActionRouter] Error executing component action:`, error);
 
           // Create action-result facet for failure
           const alias = (facet as any).state?.alias;
@@ -194,7 +193,7 @@ export class ActionEffector extends Component {
           this.addOperation({ type: 'addFacet', facet: actionResultFacet });
         }
       } else {
-        console.warn(`[ActionEffector] No handler found for action '${action}' on component '${targetId}'`);
+        console.warn(`[ActionRouter] No handler found for action '${action}' on component '${targetId}'`);
 
         // Create action-result facet for handler not found
         const alias = (facet as any).state?.alias;

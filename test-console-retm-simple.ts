@@ -7,14 +7,14 @@ import {
   Element,
   VEILStateManager,
   ConsoleAfferent,
-  ConsoleMessageReceptor,
-  ConsoleSpeechEffector,
+  ConsoleInbound,
+  ConsoleOutbound,
   AgentEffector,
   BasicAgent,
   MockLLMProvider,
-  ContextTransform
+  ContextRenderer
 } from './src';
-import { AfferentContext } from './src/spaces/receptor-effector-types';
+import { AfferentContext } from './src/spaces/component-types';
 
 async function main() {
   console.log('=== Console RETM Test (Automated) ===\n');
@@ -45,8 +45,8 @@ async function main() {
   await consoleAfferent.initialize(context);
   
   // Add receptors/effectors
-  space.addReceptor(new ConsoleMessageReceptor());
-  space.addEffector(new ConsoleSpeechEffector());
+  space.addReceptor(new ConsoleInbound());
+  space.addEffector(new ConsoleOutbound());
   
   // Create agent
   const agentElem = new Element('agent');
@@ -70,7 +70,7 @@ async function main() {
   (agent as any).provider = mockProvider;
   
   space.addEffector(new AgentEffector(agentElem, agent));
-  space.addTransform(new ContextTransform(veilState));
+  space.addTransform(new ContextRenderer(veilState));
   
   console.log('✅ Console RETM setup complete\n');
   

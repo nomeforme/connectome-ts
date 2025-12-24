@@ -15,7 +15,7 @@ export { SimpleTestCompressionEngine } from './compression/simple-test-engine';
 // HUD exports
 export * from './hud/types-v2';
 export { FrameTrackingHUD } from './hud/frame-tracking-hud';
-export { ContextTransform } from './hud/context-transform';
+export { ContextRenderer } from './hud/context-transform';
 export { 
   extractFrameRange, 
   hasFramesInRange, 
@@ -103,7 +103,7 @@ export {
 export * from './types/component';
 
 // FLEX component types and interfaces
-export * from './spaces/receptor-effector-types';
+export * from './spaces/component-types';
 
 // Base Afferent for external service integration
 export { BaseAfferent } from './components/base-afferent';
@@ -139,8 +139,8 @@ export { createBasicAgent, type CreateAgentOptions } from './agent/agent-factory
 export { ConsoleChatComponent } from './elements/console-chat'; // Legacy - use console-chat-retm instead
 export { 
   ConsoleAfferent, 
-  ConsoleMessageReceptor, 
-  ConsoleSpeechEffector,
+  ConsoleInbound, 
+  ConsoleOutbound,
   createConsoleElement 
 } from './elements/console-chat-retm';
 

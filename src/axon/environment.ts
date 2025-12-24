@@ -8,7 +8,7 @@
 import { Component } from '../spaces/component';
 import { VEILComponent, InteractiveComponent } from '../components/base-components';
 import { ControlPanelComponent } from '../widgets/control-panel';
-import { ControlPanelActionsReceptor, PanelScopeReceptor } from '../widgets/control-panel-receptors';
+import { ControlPanelActionsListener, PanelScopeReceptor } from '../widgets/control-panel-receptors';
 import { BaseAfferent } from '../components/base-afferent';
 import { SpaceEvent } from '../spaces/types';
 import { persistent, persistable } from '../persistence/decorators';
@@ -16,10 +16,8 @@ import { external } from '../host/decorators';
 import { IAxonEnvironment } from './interfaces';
 import {
   FacetDelta,
-  ReadonlyVEILState,
-  EffectorResult,
-  ExternalAction
-} from '../spaces/receptor-effector-types';
+  ReadonlyVEILState
+} from '../spaces/component-types';
 import {
   VEILDelta,
   Facet,
@@ -67,12 +65,7 @@ export function createAxonEnvironment(): IAxonEnvironment {
     Component: Component as any,
     VEILComponent: VEILComponent as any,
     InteractiveComponent: InteractiveComponent as any,
-    ControlPanelComponent: ControlPanelComponent as any,
-    BaseAfferent: BaseAfferent as any,
 
-    // Control Panel receptors (built-in, ready to use)
-    ControlPanelActionsReceptor: ControlPanelActionsReceptor as any,
-    PanelScopeReceptor: PanelScopeReceptor as any,
 
     // Decorators
     persistent,
@@ -91,35 +84,7 @@ export function createAxonEnvironment(): IAxonEnvironment {
     // WebSocket
     WebSocket: WebSocketImpl,
 
-    // Type constructors for AXON modules
-    VEILDelta: class {} as any,
-    FacetDelta: class {} as any,
-    ReadonlyVEILState: class {} as any,
-    EffectorResult: class {} as any,
-    ExternalAction: class {} as any,
 
-    // Facet types
-    Facet: class {} as any,
-    EventFacet: class {} as any,
-    SpeechFacet: class {} as any,
-    StateFacet: class {} as any,
-    ThoughtFacet: class {} as any,
-    ActionFacet: class {} as any,
 
-    // Factory functions
-    createEventFacet,
-    createSpeechFacet,
-    createStateFacet,
-    createThoughtFacet,
-    createActionFacet,
-    createAmbientFacet,
-    createAgentActivation,
-
-    // Helper to check if state has facet
-    hasFacet: (state: ReadonlyVEILState, id: string) => state.hasFacet(id),
-
-    // Helper to get facets by type
-    getFacetsByType: (state: ReadonlyVEILState, type: string) =>
-      state.getFacetsByType(type)
   };
 }

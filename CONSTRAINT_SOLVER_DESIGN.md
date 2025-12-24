@@ -21,7 +21,7 @@ class CompressionTransform extends BaseTransform {
   }
 }
 
-class ContextTransform extends BaseTransform {
+class ContextRenderer extends BaseTransform {
   requires = ['compressed-frames'];  // Automatically ordered after CompressionTransform
   
   process(state: ReadonlyVEILState): VEILDelta[] {

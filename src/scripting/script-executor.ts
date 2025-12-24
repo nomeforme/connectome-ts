@@ -1,5 +1,5 @@
 /**
- * ScriptExecutorEffector - Executes Lua scripts from agent actions
+ * ScriptRunner - Executes Lua scripts from agent actions
  *
  * FLEX Component (priority 300 - Effector) that:
  * 1. Watches for 'lua' action facets from agents
@@ -11,7 +11,7 @@
 
 import { Component } from '../spaces/component';
 import { ExecutionContext } from '../spaces/types';
-import { ReadonlyVEILState } from '../spaces/receptor-effector-types';
+import { ReadonlyVEILState } from '../spaces/component-types';
 import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
 import { Facet, hasStateAspect } from '../veil/types';
 import { LuaSandbox, createLuaSandbox, LuaExecutionResult } from './lua-sandbox';
@@ -63,9 +63,9 @@ interface RunningScript {
 }
 
 /**
- * ScriptExecutorEffector manages Lua script execution lifecycle
+ * ScriptRunner manages Lua script execution lifecycle
  */
-export class ScriptExecutorEffector extends Component {
+export class ScriptRunner extends Component {
   constraints = [priorityConstraint(ComponentPriority.EFFECTOR)];
 
   // Subscribe to activation:completed (to process lua actions) and tool-call:completed (for script resumption)
@@ -567,6 +567,6 @@ export class ScriptExecutorEffector extends Component {
 /**
  * Create a new script executor with optional configuration
  */
-export function createScriptExecutor(config?: ScriptExecutionConfig): ScriptExecutorEffector {
-  return new ScriptExecutorEffector(config);
+export function createScriptExecutor(config?: ScriptExecutionConfig): ScriptRunner {
+  return new ScriptRunner(config);
 }

@@ -29,10 +29,10 @@ import {
 } from '../src';
 import { Component } from '../src/spaces/component';
 import { ExecutionContext, SpaceEvent } from '../src/spaces/types';
-import { ReadonlyVEILState, FacetDelta, FacetFilter } from '../src/spaces/receptor-effector-types';
+import { ReadonlyVEILState, FacetDelta, FacetFilter } from '../src/spaces/component-types';
 import { VEILDelta, Facet } from '../src/veil/types';
 import { ConnectomeApplication } from '../src/host/types';
-import { AfferentContext } from '../src/spaces/receptor-effector-types';
+import { AfferentContext } from '../src/spaces/component-types';
 
 // ============================================
 // RECEPTORS (FLEX Components, priority 100)

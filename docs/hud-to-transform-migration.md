@@ -1,4 +1,4 @@
-# Migrating FrameTrackingHUD to ContextTransform
+# Migrating FrameTrackingHUD to ContextRenderer
 
 ## Overview
 
@@ -19,8 +19,8 @@ const context = this.hud.render(
 ## New Architecture
 
 ```typescript
-// New: ContextTransform runs in Phase 2
-class ContextTransform implements Transform {
+// New: ContextRenderer runs at transform priority (200-299)
+class ContextRenderer implements Transform {
   process(state: ReadonlyVEILState): Facet[] {
     // Render context for all active agents
     const contextFacets: Facet[] = [];

@@ -1,5 +1,5 @@
 /**
- * ActivationCompletedReceptor - Transforms activation:completed events into VEIL facets
+ * ActivationCompletedHandler - Transforms activation:completed events into VEIL facets
  *
  * FLEX Component (constraint: priority 100 - Receptor level)
  *
@@ -58,7 +58,7 @@ export interface ActivationCompletedPayload {
   detectedToolCall?: DetectedToolCall;
 }
 
-export class ActivationCompletedReceptor extends Component {
+export class ActivationCompletedHandler extends Component {
   constraints = [priorityConstraint(ComponentPriority.RECEPTOR)];
   topics = ['activation:completed'];
 
@@ -68,14 +68,14 @@ export class ActivationCompletedReceptor extends Component {
 
     const payload = event.payload as ActivationCompletedPayload;
     if (!payload) {
-      console.warn('[ActivationCompletedReceptor] Received activation:completed with no payload');
+      console.warn('[ActivationCompletedHandler] Received activation:completed with no payload');
       return;
     }
 
     const { activationId, agentId, agentName, streamId, rawOutput, tools, success, error } = payload;
 
     if (!success) {
-      console.error(`[ActivationCompletedReceptor] Activation ${activationId} failed: ${error}`);
+      console.error(`[ActivationCompletedHandler] Activation ${activationId} failed: ${error}`);
       // Create an error event facet
       this.addOperation({
         type: 'addFacet',
@@ -96,11 +96,11 @@ export class ActivationCompletedReceptor extends Component {
     }
 
     if (!rawOutput) {
-      console.warn(`[ActivationCompletedReceptor] Activation ${activationId} completed but no rawOutput provided`);
+      console.warn(`[ActivationCompletedHandler] Activation ${activationId} completed but no rawOutput provided`);
       return;
     }
 
-    console.log(`[ActivationCompletedReceptor] Parsing raw output for activation ${activationId} (${rawOutput.length} chars)`);
+    console.log(`[ActivationCompletedHandler] Parsing raw output for activation ${activationId} (${rawOutput.length} chars)`);
 
     // Parse the raw output into facets
     const parserConfig: ParserConfig = {
@@ -112,7 +112,7 @@ export class ActivationCompletedReceptor extends Component {
 
     const parsed = parseAgentResponse(rawOutput, parserConfig);
 
-    console.log(`[ActivationCompletedReceptor] Parsed ${parsed.operations.length} operations, ${parsed.events.length} events`);
+    console.log(`[ActivationCompletedHandler] Parsed ${parsed.operations.length} operations, ${parsed.events.length} events`);
 
     // Add all facets in this single frame
     for (const operation of parsed.operations) {

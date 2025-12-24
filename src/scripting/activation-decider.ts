@@ -44,10 +44,10 @@ interface PanelToggledPayload {
 }
 
 export class ActivationDecider extends Component {
-  // Must run before ContextTransform which renders context for activation facets
+  // Must run before ContextRenderer which renders context for activation facets
   constraints = [
     priorityConstraint(ComponentPriority.TRANSFORM),
-    beforeComponentType('ContextTransform')
+    beforeComponentType('ContextRenderer')
   ];
 
   // Subscribe to all activation-worthy events

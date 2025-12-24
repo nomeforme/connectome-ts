@@ -9,12 +9,12 @@
  *  - Generate rendered frames (without compression) to provide to the engine.
  *  - Invoke the engine's identify + compress lifecycle asynchronously.
  *  - Persist results as facets so other system parts can observe progress.
- *  - Populate the engine cache so ContextTransform/HUD pick up replacements.
+ *  - Populate the engine cache so ContextRenderer/HUD pick up replacements.
  */
 
 import { Component } from '../spaces/component';
 import { ExecutionContext } from '../spaces/types';
-import { ReadonlyVEILState } from '../spaces/receptor-effector-types';
+import { ReadonlyVEILState } from '../spaces/component-types';
 import { Facet, VEILDelta } from '../veil/types';
 import { FrameTrackingHUD } from '../hud/frame-tracking-hud';
 import { CompressionEngine, CompressibleRange, CompressionConfig, RenderedFrame, StateDelta } from '../compression/types-v2';

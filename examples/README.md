@@ -5,12 +5,12 @@
 ### Console Chat
 **File:** `console-chat-host.ts` (executable with `#!/usr/bin/env tsx`)
 
-A complete console chat application demonstrating the RETM architecture with Host integration.
+A complete console chat application demonstrating Connectome's component architecture with Host integration.
 
 **Features:**
 - ConsoleAfferent for terminal input
-- ConsoleMessageReceptor for event→facet conversion
-- ConsoleSpeechEffector for agent output
+- ConsoleInbound for event→facet conversion
+- ConsoleOutbound for agent output
 - Full persistence and restoration support
 - Component-state management via VEIL
 
@@ -23,10 +23,10 @@ tsx examples/console-chat-host.ts [--reset] [--mock]
 
 ---
 
-### Box Dispenser (RETM)
+### Box Dispenser
 **File:** `dispenser-retm.ts` (executable with `#!/usr/bin/env tsx`)
 
-Pure RETM architecture demonstrating dynamic element creation, component-state management, and effectors creating elements through events.
+Component architecture demonstrating dynamic element creation, component-state management, and effectors creating elements through events.
 
 **Features:**
 - Dynamic box creation via VEIL
@@ -79,7 +79,7 @@ tsx examples/generic-host-example.ts [--reset]
 ### Receptor-Effector Pattern
 **File:** `receptor-effector-example.ts`
 
-Demonstrates the RETM (Receptor-Effector-Transform-Maintainer) architecture pattern.
+Demonstrates component architecture patterns with priority-based ordering.
 
 ---
 
@@ -123,7 +123,7 @@ These are preserved for reference but are not actively maintained.
 When creating new examples, follow these guidelines:
 
 1. **Make them executable:** Add `#!/usr/bin/env tsx` shebang for standalone examples
-2. **Use current architecture:** Follow RETM patterns with Host when appropriate
+2. **Use current architecture:** Follow component patterns with Host when appropriate
 3. **Document clearly:** Add inline comments explaining key concepts
 4. **Add to this README:** Document what the example demonstrates
 5. **Consider npm scripts:** Add to `package.json` for easy running

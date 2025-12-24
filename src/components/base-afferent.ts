@@ -9,7 +9,7 @@ import {
   AfferentStatus, 
   AfferentMetrics,
   AfferentError
-} from '../spaces/receptor-effector-types';
+} from '../spaces/component-types';
 import { SpaceEvent } from '../spaces/types';
 import { Component } from '../spaces/component';
 

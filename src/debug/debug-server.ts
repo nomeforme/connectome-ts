@@ -915,7 +915,7 @@ export class DebugServer {
       }
       
       try {
-        // Check if we have a PersistenceMaintainer available
+        // Check if we have a PersistenceManager available
         const persistence = (this.space as any).persistence;
         if (!persistence) {
           res.status(503).json({ error: 'Persistence not available' });
