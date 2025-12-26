@@ -70,7 +70,7 @@ export function parseAgentResponse(
   });
 
   // Parse {@element.action} syntax - track position
-  const actionRegex = /\{@([\w.-]+)(?:\s*\(([^)]*)\)|\s*\{([\s\S]*?)\})?\}/g;
+  const actionRegex = /\{@([\w.:-]+)(?:\s*\(([^)]*)\)|\s*\{([\s\S]*?)\})?\}/g;
   let actionMatch;
   while ((actionMatch = actionRegex.exec(protectedContent)) !== null) {
     const fullPath = actionMatch[1];

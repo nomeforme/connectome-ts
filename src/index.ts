@@ -134,6 +134,11 @@ export { BasicAgent } from './agent/basic-agent';
 export { AgentComponent, AgentEffector } from './agent/agent-component';
 export { AgentElement } from './agent/agent-element';
 export { createBasicAgent, type CreateAgentOptions } from './agent/agent-factory';
+export { ActivationCompletedHandler } from './agent/activation-completed-receptor';
+export { ResponseHandler } from './agent/response-handler';
+
+// Core infrastructure exports
+export { ActionRouter } from './spaces/action-effector';
 
 // Element exports
 export { ConsoleChatComponent } from './elements/console-chat'; // Legacy - use console-chat-retm instead

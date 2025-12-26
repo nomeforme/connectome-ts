@@ -54,8 +54,6 @@ export class ContextRenderer extends Component {
    * Process activation facets and render context for them
    */
   private processActivations(state: ReadonlyVEILState): void {
-    console.log(`[ContextRenderer] processActivations() called with ${state.facets.size} facets`);
-
     // Find activation facets that need context
     for (const [id, facet] of state.facets) {
       if (facet.type === 'agent-activation' && hasStateAspect(facet)) {

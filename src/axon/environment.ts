@@ -8,7 +8,6 @@
 import { Component } from '../spaces/component';
 import { VEILComponent, InteractiveComponent } from '../components/base-components';
 import { ControlPanelComponent } from '../widgets/control-panel';
-import { ControlPanelActionsListener, PanelScopeReceptor } from '../widgets/control-panel-receptors';
 import { BaseAfferent } from '../components/base-afferent';
 import { SpaceEvent } from '../spaces/types';
 import { persistent, persistable } from '../persistence/decorators';
@@ -65,7 +64,8 @@ export function createAxonEnvironment(): IAxonEnvironment {
     Component: Component as any,
     VEILComponent: VEILComponent as any,
     InteractiveComponent: InteractiveComponent as any,
-
+    ControlPanelComponent: ControlPanelComponent as any,
+    BaseAfferent: BaseAfferent as any,
 
     // Decorators
     persistent,
@@ -84,7 +84,35 @@ export function createAxonEnvironment(): IAxonEnvironment {
     // WebSocket
     WebSocket: WebSocketImpl,
 
+    // Helper types
+    VEILDelta: {} as any,
+    FacetDelta: {} as any,
+    ReadonlyVEILState: {} as any,
+    EffectorResult: {} as any,
+    ExternalAction: {} as any,
 
+    // Facet types (as type references, not constructors)
+    Facet: {} as any,
+    EventFacet: {} as any,
+    SpeechFacet: {} as any,
+    StateFacet: {} as any,
+    ThoughtFacet: {} as any,
+    ActionFacet: {} as any,
 
+    // Factory functions
+    createEventFacet,
+    createSpeechFacet,
+    createStateFacet,
+    createThoughtFacet,
+    createActionFacet,
+    createAmbientFacet,
+    createAgentActivation,
+
+    // Helper functions
+    hasFacet: (state: any, id: string) => state?.facets?.has(id) ?? false,
+    getFacetsByType: (state: any, type: string) => {
+      if (!state?.facets) return [];
+      return Array.from(state.facets.values()).filter((f: any) => f.type === type);
+    },
   };
 }

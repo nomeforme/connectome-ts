@@ -23,6 +23,9 @@ import { ScriptRunner } from './scripting/script-executor';
 import { ActionResultProcessor } from './scripting/action-result-processor';
 import { ActivationDecider } from './scripting/activation-decider';
 
+// Control Panel infrastructure receptors
+import { ControlPanelActionsListener, PanelScopeReceptor } from './widgets/control-panel-receptors';
+
 // Register core components
 ComponentRegistry.register('AgentComponent', AgentComponent);
 ComponentRegistry.register('AgentEffector', AgentComponent); // Backwards compatibility alias
@@ -51,6 +54,8 @@ import { BoxStateComponent } from './components/box';
 
 // These should be AXON components in the future
 ComponentRegistry.register('BoxDispenserComponent', BoxDispenserComponent);
+ComponentRegistry.register('ControlPanelActionsListener', ControlPanelActionsListener);
+ComponentRegistry.register('PanelScopeReceptor', PanelScopeReceptor);
 ComponentRegistry.register('ControlPanelComponent', ControlPanelComponent);
 ComponentRegistry.register('ContentGeneratorComponent', ContentGeneratorComponent);
 ComponentRegistry.register('DispenseButtonComponent', DispenseButtonComponent);
