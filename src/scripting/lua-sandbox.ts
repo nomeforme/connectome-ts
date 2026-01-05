@@ -47,12 +47,30 @@ export interface LuaExecutionResult {
 }
 
 /**
+ * Built-in Lua globals that should not be serialized
+ */
+const LUA_BUILTINS = new Set([
+  // Base library
+  '_G', '_VERSION', 'assert', 'collectgarbage', 'error', 'getmetatable',
+  'ipairs', 'next', 'pairs', 'pcall', 'print', 'rawequal', 'rawget',
+  'rawlen', 'rawset', 'select', 'setmetatable', 'tonumber', 'tostring',
+  'type', 'xpcall',
+  // Standard libraries
+  'table', 'string', 'math', 'utf8', 'coroutine',
+  // JS interop
+  'js',
+  // Our builtins
+  'json', 'log',
+]);
+
+/**
  * Sandboxed Lua execution environment
  */
 export class LuaSandbox {
   private L: any; // Lua state
   private coroutine: any; // Coroutine thread
   private toolFunctions: Map<string, (...args: unknown[]) => unknown> = new Map();
+  private registeredTools: Set<string> = new Set();
 
   constructor() {
     this.L = lauxlib.luaL_newstate();
@@ -128,6 +146,9 @@ export class LuaSandbox {
     if (handler) {
       this.toolFunctions.set(name, handler);
     }
+
+    // Track registered tool for serialization exclusion
+    this.registeredTools.add(name);
 
     const L = this.L;
 
@@ -405,6 +426,253 @@ export class LuaSandbox {
 
     const statusName = statusNames[status] || `error ${status}`;
     return `Lua ${statusName}: ${message}`;
+  }
+
+  // ============================================
+  // SERIALIZATION METHODS (for session persistence)
+  // ============================================
+
+  /**
+   * Serialize all user-defined globals to a JSON-compatible object.
+   * Excludes built-in functions, libraries, and registered tools.
+   * Functions, threads, and userdata are skipped (not serializable).
+   *
+   * @returns Object with serializable globals
+   */
+  serializeGlobals(): Record<string, unknown> {
+    const L = this.L;
+    if (!L) return {};
+
+    const result: Record<string, unknown> = {};
+
+    // Get _G table
+    lua.lua_getglobal(L, to_luastring('_G'));
+    const gIndex = lua.lua_gettop(L);
+
+    // Iterate through _G
+    lua.lua_pushnil(L);
+    while (lua.lua_next(L, gIndex) !== 0) {
+      // Key at -2, value at -1
+      const keyType = lua.lua_type(L, -2);
+
+      if (keyType === lua.LUA_TSTRING) {
+        const key = to_jsstring(lua.lua_tostring(L, -2));
+
+        // Skip built-ins and registered tools
+        if (!this.shouldSerializeGlobal(key)) {
+          lua.lua_pop(L, 1);
+          continue;
+        }
+
+        // Serialize the value (starting at depth 0)
+        const value = this.serializeValue(L, -1, 0, key);
+        if (value !== undefined) {
+          result[key] = value;
+        }
+      }
+
+      lua.lua_pop(L, 1); // Pop value, keep key
+    }
+
+    lua.lua_pop(L, 1); // Pop _G
+
+    return result;
+  }
+
+  /**
+   * Check if a global should be serialized
+   */
+  private shouldSerializeGlobal(name: string): boolean {
+    // Skip Lua built-ins
+    if (LUA_BUILTINS.has(name)) return false;
+
+    // Skip registered tools (they're functions that yield)
+    if (this.registeredTools.has(name)) return false;
+
+    return true;
+  }
+
+  /** Maximum depth for table serialization to prevent infinite recursion */
+  private static readonly MAX_SERIALIZE_DEPTH = 50;
+
+  /**
+   * Serialize a Lua value to JSON-compatible format.
+   * Returns undefined for non-serializable values (functions, threads, userdata).
+   */
+  private serializeValue(
+    L: any,
+    index: number,
+    depth: number,
+    path: string
+  ): unknown {
+    // Prevent infinite recursion
+    if (depth > LuaSandbox.MAX_SERIALIZE_DEPTH) {
+      return { __truncated: true, originalType: 'table', reason: 'max depth exceeded' };
+    }
+
+    const type = lua.lua_type(L, index);
+
+    switch (type) {
+      case lua.LUA_TNIL:
+        return null;
+
+      case lua.LUA_TBOOLEAN:
+        return lua.lua_toboolean(L, index) !== 0;
+
+      case lua.LUA_TNUMBER:
+        return lua.lua_tonumber(L, index);
+
+      case lua.LUA_TSTRING:
+        return to_jsstring(lua.lua_tostring(L, index));
+
+      case lua.LUA_TTABLE:
+        return this.serializeTable(L, index, depth, path);
+
+      case lua.LUA_TFUNCTION:
+      case lua.LUA_TUSERDATA:
+      case lua.LUA_TLIGHTUSERDATA:
+      case lua.LUA_TTHREAD:
+        // Non-serializable types - skip silently
+        return undefined;
+
+      default:
+        return undefined;
+    }
+  }
+
+  /**
+   * Serialize a Lua table to JSON-compatible format.
+   * Uses depth limiting to prevent infinite recursion from circular references.
+   */
+  private serializeTable(
+    L: any,
+    index: number,
+    depth: number,
+    path: string
+  ): unknown {
+    // Normalize index
+    if (index < 0) {
+      index = lua.lua_gettop(L) + index + 1;
+    }
+
+    // Check if it's an array
+    const len = lua.lua_rawlen(L, index);
+    let isArray = len > 0;
+
+    if (isArray) {
+      lua.lua_rawgeti(L, index, 1);
+      isArray = lua.lua_type(L, -1) !== lua.LUA_TNIL;
+      lua.lua_pop(L, 1);
+    }
+
+    if (isArray) {
+      // Serialize as array
+      const arr: unknown[] = [];
+      for (let i = 1; i <= len; i++) {
+        lua.lua_rawgeti(L, index, i);
+        const value = this.serializeValue(L, -1, depth + 1, `${path}[${i}]`);
+        arr.push(value !== undefined ? value : null);
+        lua.lua_pop(L, 1);
+      }
+      return arr;
+    }
+
+    // Check if table is completely empty
+    if (len === 0) {
+      lua.lua_pushnil(L);
+      if (lua.lua_next(L, index) === 0) {
+        return [];
+      }
+      lua.lua_pop(L, 2);
+    }
+
+    // Serialize as object
+    const obj: Record<string, unknown> = {};
+    lua.lua_pushnil(L);
+
+    while (lua.lua_next(L, index) !== 0) {
+      const keyType = lua.lua_type(L, -2);
+      let key: string;
+
+      if (keyType === lua.LUA_TSTRING) {
+        key = to_jsstring(lua.lua_tostring(L, -2));
+      } else if (keyType === lua.LUA_TNUMBER) {
+        key = String(lua.lua_tonumber(L, -2));
+      } else {
+        lua.lua_pop(L, 1);
+        continue;
+      }
+
+      const value = this.serializeValue(L, -1, depth + 1, `${path}.${key}`);
+      if (value !== undefined) {
+        obj[key] = value;
+      }
+
+      lua.lua_pop(L, 1);
+    }
+
+    return obj;
+  }
+
+  /**
+   * Inject serialized globals back into the Lua environment.
+   * Used when restoring a session from persistence.
+   *
+   * @param data Serialized globals from serializeGlobals()
+   */
+  injectGlobals(data: Record<string, unknown>): void {
+    const L = this.L;
+    if (!L) return;
+
+    for (const [key, value] of Object.entries(data)) {
+      // Skip special markers
+      if (typeof value === 'object' && value !== null) {
+        if ((value as any).__circular_ref || (value as any).__truncated) {
+          continue;
+        }
+      }
+
+      this.pushValue(L, value);
+      lua.lua_setglobal(L, to_luastring(key));
+    }
+  }
+
+  /**
+   * Get list of user-defined global names (for session:inspect)
+   */
+  getUserGlobals(): string[] {
+    const L = this.L;
+    if (!L) return [];
+
+    const globals: string[] = [];
+
+    lua.lua_getglobal(L, to_luastring('_G'));
+    const gIndex = lua.lua_gettop(L);
+
+    lua.lua_pushnil(L);
+    while (lua.lua_next(L, gIndex) !== 0) {
+      const keyType = lua.lua_type(L, -2);
+
+      if (keyType === lua.LUA_TSTRING) {
+        const key = to_jsstring(lua.lua_tostring(L, -2));
+        if (this.shouldSerializeGlobal(key)) {
+          globals.push(key);
+        }
+      }
+
+      lua.lua_pop(L, 1);
+    }
+
+    lua.lua_pop(L, 1); // Pop _G
+
+    return globals.sort();
+  }
+
+  /**
+   * Get the set of registered tool names
+   */
+  getRegisteredTools(): Set<string> {
+    return new Set(this.registeredTools);
   }
 
   /**

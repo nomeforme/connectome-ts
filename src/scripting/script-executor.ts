@@ -29,6 +29,7 @@ import {
   isToolCallResultFacet,
 } from './types';
 import { getGlobalToolRegistry } from './tool-registry';
+import { LuaSessionManager } from './lua-session-manager';
 
 /**
  * Default configuration for script execution
@@ -60,6 +61,9 @@ interface RunningScript {
   resumeValue?: unknown;
   completed: boolean;
   result?: { success: true; result?: unknown } | { success: false; error: string; errorType?: ScriptResultFacet['errorType'] };
+  // Session support
+  sessionName?: string;
+  isSessionScript: boolean;
 }
 
 /**
@@ -74,6 +78,7 @@ export class ScriptExecutorEffector extends Component {
   private config: Required<ScriptExecutionConfig>;
   private runningScripts: Map<string, RunningScript> = new Map();
   private toolRegistry?: IToolRegistry;
+  private sessionManager?: LuaSessionManager;
 
   constructor(config: ScriptExecutionConfig = {}) {
     super();
@@ -87,8 +92,24 @@ export class ScriptExecutorEffector extends Component {
     this.toolRegistry = registry;
   }
 
+  /**
+   * Set the session manager (can be injected or resolved from space)
+   */
+  setSessionManager(manager: LuaSessionManager): void {
+    this.sessionManager = manager;
+  }
+
   onMount(): void {
     this.ensureToolRegistry();
+    this.ensureSessionManager();
+  }
+
+  /**
+   * Ensure session manager is available
+   */
+  private ensureSessionManager(): void {
+    if (this.sessionManager) return;
+    this.sessionManager = this.getReference<LuaSessionManager>('luaSessionManager');
   }
 
   /**
@@ -113,7 +134,12 @@ export class ScriptExecutorEffector extends Component {
       if (script.timeoutHandle) {
         clearTimeout(script.timeoutHandle);
       }
-      script.sandbox.destroy();
+      // Only destroy one-off sandboxes, not session-based ones
+      if (!script.isSessionScript) {
+        script.sandbox.destroy();
+      } else if (script.sessionName && this.sessionManager) {
+        this.sessionManager.unregisterScript(script.sessionName, script.scriptId);
+      }
     }
     this.runningScripts.clear();
   }
@@ -167,7 +193,17 @@ export class ScriptExecutorEffector extends Component {
         if (script.timeoutHandle) {
           clearTimeout(script.timeoutHandle);
         }
-        script.sandbox.destroy();
+
+        // For session scripts: unregister from session, don't destroy sandbox
+        // For one-off scripts: destroy sandbox
+        if (script.isSessionScript && script.sessionName && this.sessionManager) {
+          this.sessionManager.unregisterScript(script.sessionName, scriptId);
+          // Touch session to update last activity
+          this.sessionManager.touchSession(script.sessionName);
+        } else {
+          script.sandbox.destroy();
+        }
+
         this.runningScripts.delete(scriptId);
       }
     }
@@ -251,6 +287,7 @@ export class ScriptExecutorEffector extends Component {
 
     // Ensure tool registry is available (may be delayed due to isRestoring=true)
     this.ensureToolRegistry();
+    this.ensureSessionManager();
 
     const params = actionState.parameters || {};
     const code = params.content as string;
@@ -266,6 +303,8 @@ export class ScriptExecutorEffector extends Component {
     const streamType = (facet as any).streamType;
     // Alias can be in state (from response-parser) or parameters
     const alias = actionState.alias || params.alias;
+    // Session param for persistent sessions
+    const sessionName = params.session as string | undefined;
 
     // Calculate timeout
     let timeoutMs: number | null = this.config.defaultTimeoutMs;
@@ -284,21 +323,54 @@ export class ScriptExecutorEffector extends Component {
     // Create script ID
     const scriptId = `script:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-    // Create sandbox
-    const sandbox = createLuaSandbox();
+    // Determine if using a session or one-off execution
+    let sandbox: LuaSandbox;
+    let isSessionScript = false;
 
-    // Install built-in functions (log, json.encode/decode, etc.)
-    installBuiltins(sandbox);
-
-    // Register tools from registry
-    if (this.toolRegistry) {
-      const tools = this.toolRegistry.getTools();
-      console.log(`[ScriptExecutor] Registering ${tools.length} tools:`, tools.map(t => t.name));
-      for (const tool of tools) {
-        sandbox.registerTool(tool.name, (...args) => args);
+    if (sessionName && this.sessionManager) {
+      // Session-based execution: get or create session
+      try {
+        const session = this.sessionManager.getOrCreateSession(sessionName);
+        sandbox = session.sandbox;
+        isSessionScript = true;
+        // Register this script with the session
+        this.sessionManager.registerScript(sessionName, scriptId);
+        console.log(`[ScriptExecutor] Using session '${sessionName}' for script ${scriptId}`);
+      } catch (error: any) {
+        // Session creation failed - emit error
+        console.error(`[ScriptExecutor] Failed to get/create session '${sessionName}':`, error.message);
+        const actionResultId = `action-result:${scriptId}`;
+        this.addOperation({
+          type: 'addFacet',
+          facet: createActionResultFacet(
+            actionResultId,
+            scriptId,
+            null,
+            { success: false, error: `Session error: ${error.message}`, message: 'Failed to create session' },
+            streamId,
+            streamType,
+            alias
+          ),
+        });
+        return;
       }
     } else {
-      console.log('[ScriptExecutor] No tool registry available!');
+      // One-off execution: create new sandbox
+      sandbox = createLuaSandbox();
+
+      // Install built-in functions (log, json.encode/decode, etc.)
+      installBuiltins(sandbox);
+
+      // Register tools from registry
+      if (this.toolRegistry) {
+        const tools = this.toolRegistry.getTools();
+        console.log(`[ScriptExecutor] Registering ${tools.length} tools:`, tools.map(t => t.name));
+        for (const tool of tools) {
+          sandbox.registerTool(tool.name, (...args) => args);
+        }
+      } else {
+        console.log('[ScriptExecutor] No tool registry available!');
+      }
     }
 
     // Load the script
@@ -331,7 +403,13 @@ export class ScriptExecutorEffector extends Component {
         ),
       });
 
-      sandbox.destroy();
+      // Only destroy sandbox if one-off (not session-based)
+      if (!isSessionScript) {
+        sandbox.destroy();
+      } else if (sessionName && this.sessionManager) {
+        // Unregister script from session since it failed
+        this.sessionManager.unregisterScript(sessionName, scriptId);
+      }
       return;
     }
 
@@ -370,6 +448,8 @@ export class ScriptExecutorEffector extends Component {
       needsStart: true,
       needsResume: false,
       completed: false,
+      sessionName,
+      isSessionScript,
     };
 
     // Set up timeout if configured
