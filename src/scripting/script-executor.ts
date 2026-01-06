@@ -109,7 +109,20 @@ export class ScriptExecutorEffector extends Component {
    */
   private ensureSessionManager(): void {
     if (this.sessionManager) return;
+
+    // Try to get from reference first
     this.sessionManager = this.getReference<LuaSessionManager>('luaSessionManager');
+    if (this.sessionManager) return;
+
+    // Fall back to finding by component type in space
+    if (this.space) {
+      const component = this.space.components.find(
+        c => c.constructor.name === 'LuaSessionManager'
+      );
+      if (component) {
+        this.sessionManager = component as LuaSessionManager;
+      }
+    }
   }
 
   /**
