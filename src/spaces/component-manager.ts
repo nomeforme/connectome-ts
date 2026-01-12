@@ -9,6 +9,7 @@ import { writeFileSync, unlinkSync } from 'fs';
 import { tmpdir } from 'os';
 import { ComponentStateFacet } from '../veil/facet-types';
 import { priorityConstraint } from './constraints';
+import { noPersist, isNoPersist } from '../persistence/decorators';
 
 /**
  * ComponentManager: Unified component lifecycle management
@@ -23,6 +24,7 @@ import { priorityConstraint } from './constraints';
  * This maintains VEIL as the single source of truth for component lifecycle.
  * Both fresh starts and restoration work the same way: facets → components.
  */
+@noPersist
 export class ComponentManager extends Component {
   // Runs early so instantiated components can participate in current frame
   constraints = [priorityConstraint(50)];
@@ -122,14 +124,6 @@ export class ComponentManager extends Component {
     }
   }
 
-  // Infrastructure components that should not be instantiated by ComponentManager
-  private static readonly INFRASTRUCTURE_TYPES = new Set([
-    'ComponentManager',
-    'PersistenceManager',
-    'VEILOperationReceptor',
-    'HostHandlerComponent'
-  ]);
-
   /**
    * Instantiate a component from its component-state facet
    */
@@ -137,8 +131,9 @@ export class ComponentManager extends Component {
     const { componentId, componentType, state: config } = facet;
     const facetId = `component-state:${componentId}`;
 
-    // Skip infrastructure components
-    if (ComponentManager.INFRASTRUCTURE_TYPES.has(componentType)) {
+    // Check if this component type is marked @noPersist (infrastructure)
+    const registeredClass = ComponentRegistry.getConstructor(componentType);
+    if (registeredClass && isNoPersist(registeredClass)) {
       this.instantiatedComponents.add(facetId);
       return;
     }

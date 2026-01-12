@@ -13,13 +13,18 @@ import {
   SerializedVEILState,
   ComponentPersistenceMetadata
 } from './types';
-import { getPersistenceMetadata } from './decorators';
+import { getPersistenceMetadata, isNoPersist } from './decorators';
 import { ComponentRegistry } from './component-registry';
 
 /**
  * Serialize a component instance
  */
 export function serializeComponent(component: Component): SerializedComponent | null {
+  // Skip components marked @noPersist (infrastructure components)
+  if (isNoPersist(component)) {
+    return null;
+  }
+
   // First check for AXON-style persistence (static persistentProperties)
   const componentClass = component.constructor as any;
   if (componentClass.persistentProperties) {

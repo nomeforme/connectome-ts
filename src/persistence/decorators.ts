@@ -7,6 +7,31 @@ import { ComponentPersistenceMetadata, PersistentPropertyMetadata, Serializer, S
 // Global registry of component persistence metadata
 const componentMetadataRegistry = new Map<string, ComponentPersistenceMetadata>();
 
+// Symbol for marking components as non-persistent (infrastructure components)
+const NO_PERSIST_KEY = Symbol('noPersist');
+
+/**
+ * Decorator to mark a component class as non-persistent (infrastructure).
+ * These components are created by Space/Host and should not be serialized or restored.
+ *
+ * Alternative: For classes where decorators cause initialization issues,
+ * use a static property: `static readonly __noPersist = true;`
+ */
+export function noPersist(constructor: Function) {
+  (constructor as any)[NO_PERSIST_KEY] = true;
+}
+
+/**
+ * Check if a component class or instance is marked as non-persistent.
+ * Supports both @noPersist decorator and static __noPersist property.
+ */
+export function isNoPersist(componentOrClass: any): boolean {
+  const constructor = typeof componentOrClass === 'function'
+    ? componentOrClass
+    : componentOrClass?.constructor;
+  return constructor?.[NO_PERSIST_KEY] === true || constructor?.__noPersist === true;
+}
+
 /**
  * Decorator to mark a property as persistent
  */

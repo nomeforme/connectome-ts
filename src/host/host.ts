@@ -16,6 +16,7 @@ import { Component } from '../spaces/component';
 import { SpaceEvent } from '../spaces/types';
 import { restoreVEILState } from '../persistence/restoration';
 import { registerDebugHost, registerDebugSpace, registerDebugServer } from '../debug/debug-registry';
+import { isNoPersist } from '../persistence/decorators';
 
 export interface HostConfig {
   persistence?: {
@@ -38,8 +39,10 @@ export interface HostConfig {
 
 /**
  * Component to handle dynamic component loading events
+ * Note: Uses static __noPersist property instead of decorator to avoid initialization order issues
  */
 class HostHandlerComponent extends Component {
+  static readonly __noPersist = true;
   private host: ConnectomeHost;
 
   constructor(host: ConnectomeHost) {
@@ -564,15 +567,6 @@ export class ConnectomeHost {
       console.log(`[Host] Built properties map from ${componentPropertiesMap.size} snapshot components`);
     }
 
-    // Infrastructure components that are added by the host/space separately
-    // These should not be restored from facets
-    const infrastructureTypes = new Set([
-      'ComponentManager',
-      'PersistenceManager',
-      'VEILOperationReceptor',
-      'HostHandlerComponent'
-    ]);
-
     console.log(`[Host] Reconstructing ${componentFacets.length} components from VEIL facets...`);
 
     for (const facet of componentFacets) {
@@ -589,9 +583,10 @@ export class ConnectomeHost {
         continue;
       }
 
-      // Skip infrastructure components - they're added by the host
-      if (infrastructureTypes.has(componentType)) {
-        console.log(`[Host]   Skipping infrastructure component: ${componentType} (${componentId})`);
+      // Skip infrastructure components (marked @noPersist) - they're added by the host/space
+      const ComponentClass = ComponentRegistry.getConstructor(componentType);
+      if (ComponentClass && isNoPersist(ComponentClass)) {
+        console.log(`[Host]   Skipping @noPersist component: ${componentType} (${componentId})`);
         continue;
       }
 

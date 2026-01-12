@@ -13,6 +13,7 @@ import { serializeVEILState, serializeSpace } from './serialization';
 import { Frame } from '../veil/types';
 import { Space } from '../spaces/space';
 import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
+import { noPersist } from './decorators';
 
 export interface PersistenceManagerConfig {
   storagePath: string;
@@ -20,6 +21,7 @@ export interface PersistenceManagerConfig {
   maxDeltasPerFile?: number; // Default: 1000
 }
 
+@noPersist
 export class PersistenceManager extends Component {
   constraints = [priorityConstraint(ComponentPriority.MAINTAINER)];
 

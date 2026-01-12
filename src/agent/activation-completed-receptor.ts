@@ -17,6 +17,7 @@ import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
 import { parseAgentResponse, ParserConfig } from './response-parser';
 import { ToolDefinition } from './types';
 import { DetectedToolCall } from './incremental-tool-detector';
+import { noPersist } from '../persistence/decorators';
 
 /**
  * Payload for activation:completed event
@@ -58,6 +59,7 @@ export interface ActivationCompletedPayload {
   detectedToolCall?: DetectedToolCall;
 }
 
+@noPersist
 export class ActivationCompletedHandler extends Component {
   constraints = [priorityConstraint(ComponentPriority.RECEPTOR)];
   topics = ['activation:completed'];

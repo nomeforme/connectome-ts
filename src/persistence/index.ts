@@ -13,7 +13,7 @@ export * from './transition-manager';
 export * from './transition-maintainer';
 
 // Re-export commonly used items
-export { persistent, persistable, Serializers } from './decorators';
+export { persistent, persistable, noPersist, isNoPersist, Serializers } from './decorators';
 export { PersistenceManager } from './persistence-maintainer';
 export { ComponentRegistry } from './component-registry';
 export { restoreFromSnapshot } from './restoration';
