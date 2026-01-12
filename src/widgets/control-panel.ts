@@ -252,4 +252,21 @@ export abstract class ControlPanelComponent extends InteractiveComponent {
 
     console.log(`[ControlPanel:${this.getPanelId()}] Registered tool: ${name} (metadata stored)`);
   }
+
+  /**
+   * Request agent reactivation with a reason
+   * Useful when panel actions complete and the agent should respond to the result
+   */
+  protected reactivateAgent(reason: string): void {
+    this.emit({
+      topic: 'panel:reactivate',
+      timestamp: Date.now(),
+      payload: {
+        panelId: this.getPanelId(),
+        reason,
+        streamId: this.currentActionContext?.streamId,
+        streamType: this.currentActionContext?.streamType
+      }
+    });
+  }
 }
