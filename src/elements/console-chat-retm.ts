@@ -3,15 +3,15 @@
  *
  * Implementation using Afferent + FLEX Components:
  * - ConsoleAfferent: Manages readline, emits events when user types
- * - ConsoleMessageReceptor: FLEX Component (constraint: priority 100) converts console:message events to facets + activations
- * - ConsoleSpeechEffector: FLEX Component (constraint: priority 300) displays agent speech to console
+ * - ConsoleInbound: FLEX Component (constraint: priority 100) converts console:message events to facets + activations
+ * - ConsoleOutbound: FLEX Component (constraint: priority 300) displays agent speech to console
  */
 
 import * as readline from 'readline';
 import { BaseAfferent } from '../components/base-afferent';
 import { Component } from '../spaces/component';
 import { ExecutionContext, SpaceEvent, StreamRef } from '../spaces/types';
-import { ReadonlyVEILState, FacetDelta, FacetFilter } from '../spaces/receptor-effector-types';
+import { ReadonlyVEILState, FacetDelta, FacetFilter } from '../spaces/component-types';
 import { Facet, VEILDelta } from '../veil/types';
 import { persistable, persistent } from '../persistence/decorators';
 import { wrapFacetsAsDeltas } from '../helpers/factories';
@@ -237,10 +237,10 @@ export class ConsoleAfferent extends BaseAfferent<ConsoleConfig, ConsoleCommand>
 // ============================================
 
 /**
- * ConsoleMessageReceptor - FLEX Component (constraint: priority 100 - Receptor level)
+ * ConsoleInbound - FLEX Component (constraint: priority 100 - Receptor level)
  * Converts console:message events to facets + activations
  */
-export class ConsoleMessageReceptor extends Component {
+export class ConsoleInbound extends Component {
   constraints = [priorityConstraint(ComponentPriority.RECEPTOR)];
   topics = ['console:message'];
 
@@ -304,10 +304,10 @@ export class ConsoleMessageReceptor extends Component {
 // ============================================
 
 /**
- * ConsoleSpeechEffector - FLEX Component (constraint: priority 300 - Effector level)
+ * ConsoleOutbound - FLEX Component (constraint: priority 300 - Effector level)
  * Displays agent speech to console
  */
-export class ConsoleSpeechEffector extends Component {
+export class ConsoleOutbound extends Component {
   constraints = [priorityConstraint(ComponentPriority.EFFECTOR)];
   facetFilters: FacetFilter[] = [{ type: 'speech' }];
 
@@ -364,12 +364,12 @@ export class ConsoleSpeechEffector extends Component {
 
 export function createConsoleElement(): {
   afferent: ConsoleAfferent;
-  receptor: ConsoleMessageReceptor;
-  effector: ConsoleSpeechEffector;
+  receptor: ConsoleInbound;
+  effector: ConsoleOutbound;
 } {
   const afferent = new ConsoleAfferent();
-  const receptor = new ConsoleMessageReceptor();
-  const effector = new ConsoleSpeechEffector(afferent);
+  const receptor = new ConsoleInbound();
+  const effector = new ConsoleOutbound(afferent);
   
   return { afferent, receptor, effector };
 }

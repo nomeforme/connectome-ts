@@ -1,7 +1,6 @@
 /**
- * Base Component interface for MARTEM architecture
- * All processing components (Modulator, Afferent, Receptor, Transform, Effector, Maintainer)
- * extend this base interface
+ * Base Component interface for Connectome
+ * All processing components extend this base interface
  */
 
 import { Space } from '../spaces/space';

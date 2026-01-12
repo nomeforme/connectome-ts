@@ -1,10 +1,10 @@
 /**
  * Compression + RETM Architecture Demo
  * 
- * This example demonstrates how compression works with the RETM architecture:
- * 1. CompressionTransform (Phase 2, priority=10) - Compresses old frames
- * 2. ContextTransform (Phase 2, priority=100) - Renders context with compression
- * 3. AgentEffector (Phase 3) - Runs agent with pre-rendered context
+ * This example demonstrates how compression works with Connectome's component architecture:
+ * 1. CompressionTransform (priority=10) - Compresses old frames
+ * 2. ContextRenderer (priority=100) - Renders context with compression
+ * 3. AgentEffector (priority=300) - Runs agent with pre-rendered context
  * 
  * Run with: ts-node examples/compression-retm-demo.ts
  */
@@ -17,7 +17,7 @@ import {
   AgentComponent,
   AgentEffector,
   CompressionTransform,
-  ContextTransform,
+  ContextRenderer,
   SimpleTestCompressionEngine,
   MockLLMProvider,
   createSpeechFacet,
@@ -70,12 +70,12 @@ async function demonstrateCompression() {
   console.log(`   ✓ CompressionTransform (priority=${compressionTransform.priority})`);
   
   // Transform 2: Context Rendering (priority=100, runs after compression)
-  const contextTransform = new ContextTransform({
+  const contextTransform = new ContextRenderer({
     compressionEngine: compressionEngine,
     defaultOptions: { maxTokens: 1000 }
   });
   systemElement.addComponent(contextTransform);
-  console.log(`   ✓ ContextTransform (priority=${contextTransform.priority})`);
+  console.log(`   ✓ ContextRenderer (priority=${contextTransform.priority})`);
   console.log('   → Execution order guaranteed: Compression → Context');
   console.log();
   
@@ -112,7 +112,7 @@ async function demonstrateCompression() {
   // Add to element instead of space (auto-registers with space)
   agentElement.addComponent(agentEffector);
   
-  console.log('   ✓ AgentEffector registered (Phase 3)');
+  console.log('   ✓ AgentEffector registered (priority 300)');
   console.log();
   
   // ========================================
@@ -242,27 +242,27 @@ async function demonstrateCompression() {
   
   console.log('🏗️  Architecture Flow Summary:');
   console.log();
-  console.log('   Phase 0: Event Preprocessing (Modulators)');
+  console.log('   Priority 0-99: Event Preprocessing (Modulators)');
   console.log('      └─ No modulators in this demo');
   console.log();
-  console.log('   Phase 1: Events → VEIL (Receptors)');
+  console.log('   Priority 100-199: Events → VEIL (Receptors)');
   console.log('      └─ User messages converted to facets');
   console.log();
-  console.log('   Phase 2: VEIL → VEIL (Transforms)');
+  console.log('   Priority 200-299: VEIL → VEIL (Transforms)');
   console.log('      ├─ CompressionTransform (priority=10)');
   console.log('      │  └─ Compresses old frames when threshold met');
   console.log('      │  └─ Updates engine cache');
-  console.log('      └─ ContextTransform (priority=100)');
+  console.log('      └─ ContextRenderer (priority=100)');
   console.log('         └─ Renders context for agent activation');
   console.log('         └─ Uses compressed frames from cache');
   console.log();
-  console.log('   Phase 3: VEIL Changes → Side Effects (Effectors)');
+  console.log('   Priority 300-399: VEIL Changes → Side Effects (Effectors)');
   console.log('      └─ AgentEffector');
   console.log('         └─ Sees activation + rendered-context facets');
   console.log('         └─ Runs agent with pre-rendered context');
   console.log('         └─ Emits agent response facets');
   console.log();
-  console.log('   Phase 4: Maintenance (Maintainers)');
+  console.log('   Priority 400-499: Maintenance (Maintainers)');
   console.log('      └─ No maintainers in this demo');
   console.log();
   
@@ -277,7 +277,7 @@ async function demonstrateCompression() {
   console.log('Key Takeaways:');
   console.log();
   console.log('1. 🔢 Transform Priority: Ensures correct execution order');
-  console.log('   • CompressionTransform (10) runs before ContextTransform (100)');
+  console.log('   • CompressionTransform (10) runs before ContextRenderer (100)');
   console.log('   • Order matters because they share the engine instance');
   console.log();
   console.log('2. 🧩 Separation of Concerns:');

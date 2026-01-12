@@ -1,7 +1,7 @@
 /**
  * AgentResponseParser - Parses raw LLM output into VEIL facets
  *
- * Extracted from BasicAgent to enable parsing in ActivationCompletedReceptor.
+ * Extracted from BasicAgent to enable parsing in ActivationCompletedHandler.
  * This allows the raw LLM output to be carried through activation:completed events,
  * making the actual agent response visible for debugging and future streaming support.
  */
@@ -70,7 +70,7 @@ export function parseAgentResponse(
   });
 
   // Parse {@element.action} syntax - track position
-  const actionRegex = /\{@([\w.-]+)(?:\s*\(([^)]*)\)|\s*\{([\s\S]*?)\})?\}/g;
+  const actionRegex = /\{@([\w.:-]+)(?:\s*\(([^)]*)\)|\s*\{([\s\S]*?)\})?\}/g;
   let actionMatch;
   while ((actionMatch = actionRegex.exec(protectedContent)) !== null) {
     const fullPath = actionMatch[1];

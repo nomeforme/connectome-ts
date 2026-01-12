@@ -1,5 +1,5 @@
 /**
- * Priority-based grouping utilities for MARTEM components
+ * Priority-based grouping utilities for components
  * Components with lower priority numbers execute first
  */
 

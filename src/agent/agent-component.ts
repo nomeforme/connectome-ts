@@ -25,7 +25,7 @@ import { reference, RestorableComponent } from '../host/decorators';
 import { LLMProvider } from '../llm/llm-interface';
 import { VEILStateManager } from '../veil/veil-state';
 import { BasicAgent } from './basic-agent';
-import { FacetDelta, ReadonlyVEILState, FacetFilter } from '../spaces/receptor-effector-types';
+import { FacetDelta, ReadonlyVEILState, FacetFilter } from '../spaces/component-types';
 import { getGlobalTracer, TraceStorage } from '../tracing';
 import { RenderedContext } from '../hud/types-v2';
 import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
@@ -248,7 +248,7 @@ export class AgentComponent extends Component implements RestorableComponent {
    * Runs the agent cycle in the background (fire-and-forget).
    * Uses streaming mode - emits activation:stream events for each chunk.
    * ResponseHandler accumulates chunks and emits activation:completed when done.
-   * The ActivationCompletedReceptor then parses and creates all facets in a single frame.
+   * The ActivationCompletedHandler then parses and creates all facets in a single frame.
    */
   private runAgentCycleBackground(
     context: RenderedContext,

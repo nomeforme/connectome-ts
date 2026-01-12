@@ -17,23 +17,33 @@ The AXON protocol enables Connectome to dynamically load components from externa
 - **Dynamic Loading**: Components loaded at runtime from URLs (e.g., `axon://localhost:8080/discord`)
 - **Hot Reloading**: WebSocket support for development-time updates
 - **Protocol Separation**: Discord, Minecraft, terminals etc. developed independently
-- **MARTEM Support**: AXON modules can export any MARTEM component type
+- **Component Support**: AXON modules can export any component type with custom priorities
 - **Parameter Passing**: URL parameters passed to components (e.g., `axon://game.server/spacegame?token=xyz`)
 
 This allows adapters to be developed and served independently, maintaining clean separation of concerns.
 
-## MARTEM Architecture
+## Component Architecture
 
-The framework uses a six-phase processing model for deterministic event handling:
+Connectome uses a priority-based execution model where components process events sequentially in a flat, ordered list:
 
-1. **Afferents** (Async): Bridge external systems to Connectome events
-2. **Modulators** (Phase 0): Preprocess events (filter, aggregate, buffer)
-3. **Receptors** (Phase 1): Transform events into VEIL deltas
-4. **Transforms** (Phase 2): Process VEIL state iteratively like a "chemical reaction"
-5. **Effectors** (Phase 3): React to state changes, emit events or perform actions
-6. **Maintainers** (Phase 4): System maintenance, persistence, infrastructure
+### Priority Ranges (Conceptual Guide)
 
-All components share a unified lifecycle interface with `mount`, `unmount`, and optional `destroy` methods.
+Components declare priorities via constraints to determine execution order. These ranges help organize by responsibility:
+
+- **0-99 (Modulators)**: Event preprocessing - filter, rate-limit, aggregate incoming events
+- **100-199 (Receptors)**: Event transformation - convert events into VEIL facets
+- **200-299 (Transforms)**: State processing - derive and update VEIL state
+- **300-399 (Effectors)**: External effects - API calls, database writes, external actions
+- **400-499 (Maintainers)**: System maintenance - persistence, cleanup, infrastructure
+
+### Asynchronous Afferents
+
+Afferents run outside the frame loop as async event sources:
+- Bridge external systems (Discord, WebSocket, stdin) to Connectome events
+- Process commands from effectors via command queues
+- Emit events that trigger frame processing
+
+All components use a unified `Component` interface with `execute(context)` method and constraint-based ordering. Components see live VEIL state - changes made by earlier components (lower priority) are immediately visible to later ones.
 
 ## Key Concepts
 
@@ -414,10 +424,10 @@ jq 'select(.component == "BasicAgent")' traces/trace-*.jsonl
 
 ## Architecture Benefits
 
-1. **Clear Separation of Concerns**: Each MARTEM type has a specific responsibility
-2. **Deterministic Processing**: Phases execute in order with clear boundaries
+1. **Clear Separation of Concerns**: Priority ranges organize components by responsibility
+2. **Deterministic Processing**: Sequential execution with live state visibility
 3. **Flexible Composition**: Mix and match components as needed
-4. **Auto-Discovery**: Components work immediately when added to elements
+4. **Immediate Visibility**: Components see changes from earlier components in same frame
 5. **Type Safety**: Full TypeScript support with comprehensive types
 6. **Protocol Agnostic**: Core stays clean through AXON dynamic loading
 
@@ -425,11 +435,10 @@ jq 'select(.component == "BasicAgent")' traces/trace-*.jsonl
 
 ✅ **Core Complete**
 - VEIL state management with aspect-based facets
-- MARTEM component architecture with unified lifecycle
-- Element tree with auto-discovery
+- Constraint-based component architecture with unified lifecycle
+- Flat component list with priority-based execution
 - Event system with topic-based routing
 - Continuation system for async coordination
-- Symbol-based type detection
 - Stream references for flexible communication
 - Three fundamental VEIL operations
 - Frame-based processing with event attribution
@@ -450,7 +459,7 @@ jq 'select(.component == "BasicAgent")' traces/trace-*.jsonl
 
 ## Documentation
 
-📚 **[Complete Architecture Guide](docs/connectome-ts-reqs.md)** - Comprehensive reference covering VEIL, MARTEM, AXON, and all core concepts
+📚 **[Complete Architecture Guide](docs/connectome-ts-reqs.md)** - Comprehensive reference covering VEIL, Components, AXON, and all core concepts
 
 The architecture guide above is the primary reference. Additional documentation in the `docs/` folder may be outdated.
 

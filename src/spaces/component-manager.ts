@@ -1,6 +1,6 @@
 import { Component } from './component';
 import { ExecutionContext } from './types';
-import { SpaceEvent } from './receptor-effector-types';
+import { SpaceEvent } from './component-types';
 import { ReadonlyVEILState, ReadonlyFrame } from '../veil/types';
 import { ComponentRegistry } from '../persistence/component-registry';
 import { createComponentStateFacet } from '../helpers/factories';
@@ -125,7 +125,7 @@ export class ComponentManager extends Component {
   // Infrastructure components that should not be instantiated by ComponentManager
   private static readonly INFRASTRUCTURE_TYPES = new Set([
     'ComponentManager',
-    'PersistenceMaintainer',
+    'PersistenceManager',
     'VEILOperationReceptor',
     'HostHandlerComponent'
   ]);

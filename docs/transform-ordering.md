@@ -1,13 +1,13 @@
-# Transform Ordering in Phase 2
+# Transform Ordering
 
-This document explains how transforms are ordered during Phase 2 execution.
+This document explains how transforms are ordered during frame execution.
 
 ## The Problem
 
-Transforms run in Phase 2 to modify VEIL state. Sometimes **order matters** - for example:
-- `CompressionTransform` needs to run before `ContextTransform`
-- Why? `ContextTransform` reads from the compression engine's cache
-- If `ContextTransform` runs first, it won't see any compressed frames
+Transforms (components with priority 200-299) modify VEIL state. Sometimes **order matters** - for example:
+- `CompressionTransform` needs to run before `ContextRenderer`
+- Why? `ContextRenderer` reads from the compression engine's cache
+- If `ContextRenderer` runs first, it won't see any compressed frames
 
 ## The Solution: Optional Priority
 
@@ -23,7 +23,7 @@ class CompressionTransform extends BaseTransform {
   // ...
 }
 
-class ContextTransform extends BaseTransform {
+class ContextRenderer extends BaseTransform {
   priority = 100;  // Runs after compression
   // ...
 }
@@ -133,7 +133,7 @@ This is a **stable sort** - transforms without priority maintain their registrat
 const compression = new CompressionTransform({ engine });
 compression.priority = 10;  // Explicit priority
 
-const context = new ContextTransform(veilState, engine);
+const context = new ContextRenderer(veilState, engine);
 context.priority = 100;     // Explicit priority
 
 space.addTransform(context);      // Register in any order
@@ -163,7 +163,7 @@ space.addTransform(metricCalculator);
 const compression = new CompressionTransform({ engine });
 compression.priority = 10;
 
-const context = new ContextTransform(veilState, engine);
+const context = new ContextRenderer(veilState, engine);
 context.priority = 100;
 
 // Custom transforms don't need priority
@@ -188,11 +188,11 @@ space.addTransform(context);
 1. **Document dependencies** in transform class comments:
    ```typescript
    /**
-    * ContextTransform - Renders context for agent activations
+    * ContextRenderer - Renders context for agent activations
     * 
     * DEPENDENCIES: Expects CompressionTransform to run first (priority < 100)
     */
-   class ContextTransform extends BaseTransform {
+   class ContextRenderer extends BaseTransform {
      priority = 100;
      // ...
    }
@@ -208,7 +208,7 @@ space.addTransform(context);
 
 ## Evolution Path: From Priorities to Constraint Solver
 
-**Current (Phase 1): Numeric Priorities**
+**Current: Numeric Priorities**
 
 Priorities work today but have limitations:
 - Magic numbers (what does `priority = 50` mean?)
@@ -221,7 +221,7 @@ class CompressionTransform extends BaseTransform {
 }
 ```
 
-**Future (Phase 2): Declarative Constraints**
+**Future: Declarative Constraints**
 
 Replace priorities with semantic dependencies:
 
@@ -231,7 +231,7 @@ class CompressionTransform extends BaseTransform {
   requires = ['state-changes-finalized']; // optional
 }
 
-class ContextTransform extends BaseTransform {
+class ContextRenderer extends BaseTransform {
   requires = ['compressed-frames'];  // Auto-orders after CompressionTransform
 }
 
@@ -272,7 +272,7 @@ class CompressionTransform extends BaseTransform {
   // TODO [constraint-solver]: Replace with provides = ['compressed-frames']
   
   // Infrastructure: runs early to populate cache
-  // Used by: ContextTransform
+  // Used by: ContextRenderer
 }
 ```
 

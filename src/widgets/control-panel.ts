@@ -65,7 +65,7 @@ export abstract class ControlPanelComponent extends InteractiveComponent {
     this.toolsMetadata = [];
 
     // Register panel control actions (just the handlers, no facets yet)
-    // Handlers receive (params, actionContext) from ActionEffector
+    // Handlers receive (params, actionContext) from ActionRouter
     this.actions.set('open', async (_params: any, context?: ActionContext) => {
       this.currentActionContext = context;
       await this.openPanel();
@@ -85,7 +85,7 @@ export abstract class ControlPanelComponent extends InteractiveComponent {
    */
   async onMountComplete(): Promise<void> {
     // Emit event with all registered tools
-    // ControlPanelActionsReceptor will create facets declaratively
+    // ControlPanelActionsListener will create facets declaratively
     console.log(`[ControlPanel:${this.getPanelId()}] Emitting tools-registered event with ${this.toolsMetadata.length} tools`);
 
     this.emit({
@@ -225,7 +225,7 @@ export abstract class ControlPanelComponent extends InteractiveComponent {
 
   /**
    * Register a panel tool - stores metadata, doesn't create facets
-   * Facets will be created declaratively by ControlPanelActionsReceptor
+   * Facets will be created declaratively by ControlPanelActionsListener
    */
   protected registerPanelTool(
     name: string,
@@ -251,5 +251,22 @@ export abstract class ControlPanelComponent extends InteractiveComponent {
     });
 
     console.log(`[ControlPanel:${this.getPanelId()}] Registered tool: ${name} (metadata stored)`);
+  }
+
+  /**
+   * Request agent reactivation with a reason
+   * Useful when panel actions complete and the agent should respond to the result
+   */
+  protected reactivateAgent(reason: string): void {
+    this.emit({
+      topic: 'panel:reactivate',
+      timestamp: Date.now(),
+      payload: {
+        panelId: this.getPanelId(),
+        reason,
+        streamId: this.currentActionContext?.streamId,
+        streamType: this.currentActionContext?.streamType
+      }
+    });
   }
 }

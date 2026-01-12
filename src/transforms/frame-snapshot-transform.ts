@@ -11,7 +11,7 @@
 
 import { Component } from '../spaces/component';
 import { ExecutionContext } from '../spaces/types';
-import { ReadonlyVEILState } from '../spaces/receptor-effector-types';
+import { ReadonlyVEILState } from '../spaces/component-types';
 import { VEILDelta } from '../veil/types';
 import { FrameTrackingHUD } from '../hud/frame-tracking-hud';
 import { VEILStateManager } from '../veil/veil-state';

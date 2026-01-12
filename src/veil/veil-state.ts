@@ -6,7 +6,7 @@ import {
   FrameTransition,
   Frame
 } from './types';
-import { FacetDelta } from '../spaces/receptor-effector-types';
+import { FacetDelta } from '../spaces/component-types';
 import { Space } from '../spaces/space';
 import { Component } from '../spaces/component';
 import { isForkInvariant } from '../spaces/types';

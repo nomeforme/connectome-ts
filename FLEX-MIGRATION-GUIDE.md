@@ -1,8 +1,12 @@
-# FLEX Phase 1: Migration Guide
+# FLEX Migration Guide
+
+**Historical Note:** This guide references "MARTEM" and "phases" - these refer to an old execution model that has been removed. FLEX is the current architecture. This guide is kept for understanding the evolution and migration patterns.
+
+---
 
 ## Overview
 
-This guide explains how to migrate your Connectome applications from the tree-based Element hierarchy to the new flat component list architecture (FLEX).
+This guide explains FLEX (Flat List Execution) - Connectome's flat component list architecture with constraint-based ordering.
 
 ## Why Migrate?
 

@@ -232,7 +232,7 @@ Agent Output:
 ┌─────────────────────────────────────────────────────────────┐
 │  Frame 2: Script Initialization                              │
 │  ─────────────────────────────────────────────────────────── │
-│  ScriptExecutorEffector receives action                      │
+│  ScriptRunner receives action                      │
 │  Creates: script-execution facet { id: "s-001",              │
 │           status: "running", parentScriptId: null }          │
 │  Creates Lua environment, populates tools                    │
@@ -261,7 +261,7 @@ Agent Output:
 ┌─────────────────────────────────────────────────────────────┐
 │  Frame 4: Script Resumes                                     │
 │  ─────────────────────────────────────────────────────────── │
-│  ScriptExecutorEffector sees tool-call:completed for tc-001  │
+│  ScriptRunner sees tool-call:completed for tc-001  │
 │  Queries tool-call-result facet, gets result value           │
 │  Updates s-001: { status: "running" }                        │
 │  Resumes Lua coroutine with result value                     │
@@ -287,7 +287,7 @@ Agent Output:
 ┌─────────────────────────────────────────────────────────────┐
 │  Frame 6: Script Completes                                   │
 │  ─────────────────────────────────────────────────────────── │
-│  ScriptExecutorEffector sees tool-call:completed for tc-002  │
+│  ScriptRunner sees tool-call:completed for tc-002  │
 │  Resumes Lua coroutine, script returns                       │
 │  Creates: script-result facet { id: "sr-001",                │
 │           scriptId: "s-001", success: true,                  │
@@ -431,12 +431,12 @@ Beyond registered tools, scripts have access to:
 
 ## Component Architecture
 
-### ScriptExecutorEffector
+### ScriptRunner
 
 Main component handling script lifecycle:
 
 ```typescript
-class ScriptExecutorEffector extends Component {
+class ScriptRunner extends Component {
   constraints = [priorityConstraint(ComponentPriority.EFFECTOR)];
 
   private toolRegistry: IToolRegistry;

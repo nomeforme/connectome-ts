@@ -25,7 +25,7 @@ export interface CreateAgentOptions {
   
   // Optional infrastructure
   veilStateManager?: VEILStateManager;
-  // Note: compressionEngine removed - use CompressionTransform + ContextTransform for compression
+  // Note: compressionEngine removed - use CompressionTransform + ContextRenderer for compression
 }
 
 /**
@@ -86,7 +86,7 @@ export type BasicAgentConstructorOptions = {
   config: AgentConfig;
   provider: LLMProvider;
   veilStateManager?: VEILStateManager;
-  // Note: compressionEngine removed - use CompressionTransform + ContextTransform for compression
+  // Note: compressionEngine removed - use CompressionTransform + ContextRenderer for compression
 };
 
 /**

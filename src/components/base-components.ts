@@ -31,6 +31,9 @@ export abstract class VEILComponent extends Component {
 
   /**
    * Add an operation to the current frame
+   * 
+   * Operations are applied immediately to VEIL state via space.applyOperation()
+   * so that subsequent components in the same frame can see the changes.
    */
   protected addOperation(operation: VEILDelta): void {
     // Validate operation type
@@ -49,16 +52,9 @@ export abstract class VEILComponent extends Component {
       return;
     }
     
-    const frame = this.space.getCurrentFrame ? this.space.getCurrentFrame() : undefined;
-    if (!frame) {
-      throw new Error(
-        `VEIL operations are only allowed during frame processing. ` +
-        `Move this operation to an event handler or use deferred operations. ` +
-        `Component: ${this.constructor.name}, Operation: ${operation.type}`
-      );
-    }
-    
-    frame.deltas.push(operation);
+    // Use space.applyOperation for immediate application
+    // This ensures subsequent components in the same frame see the changes
+    (this.space as any).applyOperation(operation);
   }
   
   /**
@@ -98,20 +94,29 @@ export abstract class VEILComponent extends Component {
   
   /**
    * Process any deferred operations when added to space
+   * Called automatically during frame processing
    */
   protected processDeferredOperations(): void {
-    if (this._deferredOperations && this.space) {
-      const frame = this.space.getCurrentFrame ? this.space.getCurrentFrame() : undefined;
-      console.log(`[VEILComponent.processDeferredOperations] frame exists: ${!!frame}, operations: ${this._deferredOperations.length}`);
-      if (frame) {
-        for (const op of this._deferredOperations) {
-          const opInfo = op.type === 'addFacet' ? `${op.type} ${(op as any).facet?.id}` : op.type;
-          console.log(`[VEILComponent.processDeferredOperations] Adding to frame:`, opInfo);
-          frame.deltas.push(op);
-        }
+    if (this._deferredOperations && this._deferredOperations.length > 0 && this.space) {
+      console.log(`[VEILComponent.processDeferredOperations] Processing ${this._deferredOperations.length} deferred operations`);
+      const ops = this._deferredOperations;
+      this._deferredOperations = undefined; // Clear before processing to prevent re-entry
+      
+      for (const op of ops) {
+        const opInfo = op.type === 'addFacet' ? `${op.type} ${(op as any).facet?.id}` : op.type;
+        console.log(`[VEILComponent.processDeferredOperations] Applying:`, opInfo);
+        // Use immediate application
+        (this.space as any).applyOperation(op);
       }
-      this._deferredOperations = undefined;
     }
+  }
+  
+  /**
+   * Called by Space during frame processing - override in subclasses
+   * Base implementation processes deferred operations
+   */
+  execute(context: any): void {
+    this.processDeferredOperations();
   }
   
   /**

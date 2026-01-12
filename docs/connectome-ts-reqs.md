@@ -146,50 +146,68 @@ Agents use @element.action syntax for invoking tools:
 
 Tools are registered with explicit paths (no wildcards) to avoid collisions. The action parser handles inline named parameters with type inference (strings, numbers, booleans). Note: Block format has limitations with nested braces and should be used for simple key-value pairs.
 
-## MARTEM Architecture
+## Component Architecture
 
-The MARTEM (Modulator/Afferent/Receptor/Transform/Effector/Maintainer) architecture provides a deterministic processing cycle for events:
+Connectome uses a **priority-based execution model** where components process events sequentially in a flat, ordered list. Each frame processes one event through all enabled components in priority order.
 
-### Phase 0 - Event Preprocessing (Modulators)
-- Pure functions that preprocess events before they enter the system
-- Can filter, aggregate, buffer, or rewrite the event queue
-- No access to VEIL state
-- Examples: Rate limiting, event deduplication, batching
+### Execution Model
 
-### Phase 1 - Events → Facets (Receptors)
-- Pure functions that transform SpaceEvents into Facets
-- No side effects or external dependencies
-- Multiple receptors can process the same event
-- Stateless by design - any state must be read from VEIL
+```typescript
+class MyComponent extends Component {
+  constraints = [priorityConstraint(100)];  // Execution priority
+  topics = ['user.message'];                // Optional topic filter
+  
+  execute(context: ExecutionContext): void {
+    const { event, state, bufferedEvents } = context;
+    
+    // Process event, modify VEIL state, emit new events
+    this.addOperation({ type: 'addFacet', facet: ... });
+    this.emit({ topic: 'processed', payload: ... });
+  }
+}
+```
 
-### Phase 2 - Facets → Facets (Transforms)
-- Pure functions that process VEIL state to produce new facets
-- Examples: HUD context generation, state transition detection
-- Loops until no new facets are generated (enables cascading)
-- Maximum of 100 iterations to prevent infinite loops
-- Can read any facet in VEIL, including InternalStateFacets
-- Operates as a "chemical reaction space" - deltas applied directly to working state
+**Key Properties:**
+- Components execute in ascending priority order (0, 100, 200, 300...)
+- Each component sees VEIL state with all changes from earlier components
+- Changes are applied immediately and visible to subsequent components
+- Events emitted during processing are queued for future frames
 
-### Phase 3 - Facets → Events/Actions (Effectors)
-- Stateful components that observe facet changes
-- Can emit new events, perform external actions
-- Examples: Agent activation, console output, Discord messaging
-- Can directly update their own component-state facets (proposed)
+### Priority Ranges (Conceptual Guide)
 
-### Phase 4 - Maintenance → Events (Maintainers)
-- Perform system maintenance operations
-- Examples: Element tree management, persistence, transition tracking
-- Can emit new events for the next frame
-- Can directly update their own component-state facets (proposed)
+These ranges organize components by responsibility. They're naming conventions, not enforced types:
 
-### Async - External System Integration (Afferents)
-- Run asynchronously outside the frame boundary
-- Bridge external systems to Connectome events
-- Managed by effectors, have their own command queue
-- Examples: Discord WebSocket, console input, file watchers
-- Can update their own component-state via async bridge (proposed)
+**0-99 (Modulators)**: Event preprocessing
+- Filter, rate-limit, aggregate, or transform incoming events
+- No direct VEIL access - work with event stream
+- Examples: RateLimiter, EventDeduplicator, EventBatcher
 
-All MARTEM components implement a unified Component interface with mount/unmount/destroy lifecycle methods. This architecture provides clear data flow, testability through pure functions in Phases 0-2, and controlled side effects in Phases 3-4 and Afferents.
+**100-199 (Receptors)**: Event → VEIL transformation
+- Transform SpaceEvents into VEIL facets
+- Stateless by design - read from VEIL, don't store local state
+- Examples: MessageReceptor, CommandReceptor, ActivationReceptor
+
+**200-299 (Transforms)**: VEIL state processing
+- Derive new facets from existing VEIL state
+- Examples: ContextRenderer, CompressionTransform, StateTransitionTransform
+- Can cascade - one transform's output becomes input for the next
+
+**300-399 (Effectors)**: External side effects
+- Perform external actions (API calls, database writes, Discord messages)
+- React to VEIL state changes
+- Examples: AgentEffector, ConsoleOutbound, NotificationEffector
+
+**400-499 (Maintainers)**: System maintenance
+- Persistence, cleanup, infrastructure operations
+- Examples: PersistenceManager, TransitionMaintainer, MetricsCollector
+
+**Asynchronous Afferents**: External event sources
+- Run outside frame loop, bridge external systems to Connectome
+- Emit events that trigger frame processing
+- Managed via command queues from effectors
+- Examples: DiscordAfferent, ConsoleAfferent, WebSocketAfferent
+
+All components implement a unified `Component` interface with `execute(context)` method. The architecture provides clear data flow, deterministic execution order, and live state visibility.
 
 ## System Architecture
 
@@ -213,9 +231,9 @@ The AXON protocol enables Connectome to dynamically load components from externa
 4. **Parameter Passing**: URL parameters are passed to loaded components (e.g., `axon://game.server/spacegame?token=xyz`)
 5. **Action Registration**: Loaded components can register actions that agents can invoke via `@element.action` syntax
 6. **Module Versioning**: Cache-busting ensures fresh modules after changes
-7. **MARTEM Support**: AXON modules can export Modulators, Afferents, Receptors, Effectors, Transforms, and Maintainers directly
-8. **V2 Environment**: Extended environment provides all MARTEM interfaces, base classes (BaseAfferent, etc.), and helpers
-9. **Mixed Modules**: AXON modules can export both traditional Components and MARTEM components simultaneously
+7. **Component Support**: AXON modules can export any component type with custom priorities
+8. **Extended Environment**: Provides Component base class, BaseAfferent, constraint helpers, and VEIL factories
+9. **Flexible Exports**: Modules can export multiple component types and configurations
 
 The AxonElement acts as a loader that:
 - Fetches the manifest from the HTTP endpoint
@@ -346,7 +364,7 @@ Most external events are batchable, although not all. In this case they cause up
 - Unified host registry system for references
 - FrameTrackingHUD with aspect-based rendering
 - ConsoleInputReceptor and ConsoleOutputEffector
-- ContextTransform replacing HUD context generation
+- ContextRenderer replacing HUD context generation
 - AgentEffector replacing AgentComponent
 - @element.action syntax with hierarchical paths
 - Action parser with type inference

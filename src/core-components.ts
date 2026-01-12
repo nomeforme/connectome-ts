@@ -10,32 +10,35 @@ import { ComponentRegistry } from './persistence/component-registry';
 
 // Core components
 import { AgentComponent } from './agent/agent-component';
-import { ActivationCompletedReceptor } from './agent/activation-completed-receptor';
+import { ActivationCompletedHandler } from './agent/activation-completed-receptor';
 import { ResponseHandler } from './agent/response-handler';
-import { ActionEffector } from './spaces/action-effector';
-import { ContextTransform } from './hud/context-transform';
+import { ActionRouter } from './spaces/action-effector';
+import { ContextRenderer } from './hud/context-transform';
 import { ConsoleChatComponent } from './elements/console-chat';
 import { SpaceNotesComponent } from './components/space-notes';
 import { AxonLoaderComponent } from './components/axon-loader';
 
 // Scripting components (FLEX architecture)
-import { ScriptExecutorEffector } from './scripting/script-executor';
+import { ScriptRunner } from './scripting/script-executor';
 import { ActionResultProcessor } from './scripting/action-result-processor';
 import { ActivationDecider } from './scripting/activation-decider';
+
+// Control Panel infrastructure receptors
+import { ControlPanelActionsListener, PanelScopeReceptor } from './widgets/control-panel-receptors';
 
 // Register core components
 ComponentRegistry.register('AgentComponent', AgentComponent);
 ComponentRegistry.register('AgentEffector', AgentComponent); // Backwards compatibility alias
-ComponentRegistry.register('ActivationCompletedReceptor', ActivationCompletedReceptor);
+ComponentRegistry.register('ActivationCompletedHandler', ActivationCompletedHandler);
 ComponentRegistry.register('ResponseHandler', ResponseHandler);
-ComponentRegistry.register('ActionEffector', ActionEffector);
-ComponentRegistry.register('ContextTransform', ContextTransform);
+ComponentRegistry.register('ActionRouter', ActionRouter);
+ComponentRegistry.register('ContextRenderer', ContextRenderer);
 ComponentRegistry.register('ConsoleChatComponent', ConsoleChatComponent);
 ComponentRegistry.register('SpaceNotesComponent', SpaceNotesComponent);
 ComponentRegistry.register('AxonLoaderComponent', AxonLoaderComponent);
 
 // Scripting components
-ComponentRegistry.register('ScriptExecutorEffector', ScriptExecutorEffector);
+ComponentRegistry.register('ScriptRunner', ScriptRunner);
 ComponentRegistry.register('ActionResultProcessor', ActionResultProcessor);
 ComponentRegistry.register('ActivationDecider', ActivationDecider);
 
@@ -51,6 +54,8 @@ import { BoxStateComponent } from './components/box';
 
 // These should be AXON components in the future
 ComponentRegistry.register('BoxDispenserComponent', BoxDispenserComponent);
+ComponentRegistry.register('ControlPanelActionsListener', ControlPanelActionsListener);
+ComponentRegistry.register('PanelScopeReceptor', PanelScopeReceptor);
 ComponentRegistry.register('ControlPanelComponent', ControlPanelComponent);
 ComponentRegistry.register('ContentGeneratorComponent', ContentGeneratorComponent);
 ComponentRegistry.register('DispenseButtonComponent', DispenseButtonComponent);

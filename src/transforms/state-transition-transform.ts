@@ -8,7 +8,7 @@
 
 import { Component } from '../spaces/component';
 import { ExecutionContext } from '../spaces/types';
-import { ReadonlyVEILState } from '../spaces/receptor-effector-types';
+import { ReadonlyVEILState } from '../spaces/component-types';
 import { Facet, hasStateAspect, StateFacet, VEILDelta } from '../veil/types';
 import { createEventFacet } from '../helpers/factories';
 import { priorityConstraint, ComponentPriority } from '../spaces/constraints';

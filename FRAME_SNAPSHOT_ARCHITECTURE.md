@@ -82,9 +82,9 @@ for (const frame of frames) {
 }
 ```
 
-### Option 3: Explicit Capture Transform (Phase 2)
+### Option 3: Explicit Capture Transform
 
-**Where:** A dedicated `FrameSnapshotTransform` in Phase 2
+**Where:** A dedicated `FrameSnapshotTransform` at transform priority (200-299)
 
 **Pros:**
 - Clean separation of concerns
@@ -93,7 +93,7 @@ for (const frame of frames) {
 - Can be configured (capture every N frames, etc.)
 
 **Cons:**
-- Snapshot happens after Phase 2, not at "creation"
+- Snapshot happens after transforms run, not at frame creation
 - Still within same frame, so reasonably close to creation time
 
 ```typescript
@@ -125,8 +125,8 @@ export class FrameSnapshotTransform extends BaseTransform {
 ## Recommendation: Option 3 (Transform-Based)
 
 **Why:**
-- Fits naturally into MARTEM architecture
-- Runs after Phase 2 stabilizes (late priority)
+- Fits naturally into component architecture
+- Runs after transforms stabilize (late priority in 200-299 range)
 - Optional/configurable (can be disabled)
 - No special Space logic needed
 - Can be extended (e.g., only snapshot every N frames)

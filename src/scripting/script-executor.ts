@@ -1,5 +1,5 @@
 /**
- * ScriptExecutorEffector - Executes Lua scripts with persistent session support
+ * ScriptRunner - Executes Lua scripts with persistent session support
  *
  * FLEX Component (priority 300 - Effector) that:
  * 1. Watches for 'lua' action facets from agents
@@ -12,7 +12,7 @@
 
 import { Component } from '../spaces/component';
 import { ExecutionContext } from '../spaces/types';
-import { ReadonlyVEILState } from '../spaces/receptor-effector-types';
+import { ReadonlyVEILState } from '../spaces/component-types';
 import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
 import { Facet, hasStateAspect } from '../veil/types';
 import { LuaSandbox, createLuaSandbox, LuaExecutionResult } from './lua-sandbox';
@@ -107,10 +107,10 @@ const sessionStatesSerializer = Serializers.object<SerializedSession[]>(
 );
 
 /**
- * ScriptExecutorEffector manages Lua script execution with integrated session support
+ * ScriptRunner manages Lua script execution with integrated session support
  */
 @persistable(1)
-export class ScriptExecutorEffector extends Component {
+export class ScriptRunner extends Component {
   constraints = [priorityConstraint(ComponentPriority.EFFECTOR)];
 
   // Subscribe to all events (need to catch activation:completed, tool-call:completed, and action:created for session:*)
@@ -951,6 +951,6 @@ export class ScriptExecutorEffector extends Component {
 /**
  * Create a new script executor with optional configuration
  */
-export function createScriptExecutor(config?: ScriptExecutionConfig): ScriptExecutorEffector {
-  return new ScriptExecutorEffector(config);
+export function createScriptExecutor(config?: ScriptExecutionConfig): ScriptRunner {
+  return new ScriptRunner(config);
 }

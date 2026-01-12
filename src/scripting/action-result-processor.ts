@@ -14,7 +14,7 @@
 
 import { Component } from '../spaces/component';
 import { ExecutionContext } from '../spaces/types';
-import { FacetFilter } from '../spaces/receptor-effector-types';
+import { FacetFilter } from '../spaces/component-types';
 import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
 import { ActionResultFacet } from './types';
 

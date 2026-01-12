@@ -10,7 +10,7 @@ import {
   ReadonlyVEILState,
   FacetDelta,
   FacetFilter
-} from '../spaces/receptor-effector-types';
+} from '../spaces/component-types';
 import { hasContentAspect, VEILDelta } from '../veil/types';
 import { createAgentActivation, createEventFacet, wrapFacetsAsDeltas } from '../helpers/factories';
 import { priorityConstraint, ComponentPriority } from '../spaces/constraints';

@@ -7,9 +7,9 @@ import {
   Element,
   VEILStateManager,
   ConsoleAfferent,
-  ConsoleMessageReceptor
+  ConsoleInbound
 } from './src';
-import { AfferentContext } from './src/spaces/receptor-effector-types';
+import { AfferentContext } from './src/spaces/component-types';
 
 async function main() {
   console.log('=== Console Afferent Test ===\n');
@@ -36,7 +36,7 @@ async function main() {
   await consoleAfferent.initialize(context);
   
   // Add receptor
-  space.addReceptor(new ConsoleMessageReceptor());
+  space.addReceptor(new ConsoleInbound());
   
   console.log('✅ Setup complete\n');
   

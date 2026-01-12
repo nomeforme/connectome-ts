@@ -10,7 +10,7 @@ import {
   Transform,
   ReadonlyVEILState,
   FacetDelta
-} from '../src/spaces/receptor-effector-types';
+} from '../src/spaces/component-types';
 import { SpaceEvent } from '../src/spaces/types';
 import { Facet } from '../src/veil/types';
 

@@ -1,5 +1,5 @@
 /**
- * ContextTransform - A Transform that renders context for agent activations
+ * ContextRenderer - A Transform that renders context for agent activations
  *
  * FLEX Component (constraint: priority 200) that runs during frame processing and creates
  * rendered-context facets for any pending agent activations.
@@ -7,7 +7,7 @@
 
 import { Component } from '../spaces/component';
 import { ExecutionContext } from '../spaces/types';
-import { ReadonlyVEILState } from '../spaces/receptor-effector-types';
+import { ReadonlyVEILState } from '../spaces/component-types';
 import { Facet, hasStateAspect, VEILDelta } from '../veil/types';
 import { FrameTrackingHUD } from './frame-tracking-hud';
 import { CompressionEngine } from '../compression/types-v2';
@@ -15,7 +15,7 @@ import { HUDConfig } from './types-v2';
 import { VEILStateManager } from '../veil/veil-state';
 import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
 
-export interface ContextTransformConfig {
+export interface ContextRendererConfig {
   compressionEngine?: CompressionEngine;
   defaultOptions?: Partial<HUDConfig>;
   /**
@@ -26,7 +26,7 @@ export interface ContextTransformConfig {
   enableThinkingMode?: boolean;
 }
 
-export class ContextTransform extends Component {
+export class ContextRenderer extends Component {
   constraints = [priorityConstraint(ComponentPriority.TRANSFORM)];
 
   private hud: FrameTrackingHUD;
@@ -34,7 +34,7 @@ export class ContextTransform extends Component {
   private defaultOptions?: Partial<HUDConfig>;
   private enableThinkingMode: boolean;
   
-  constructor(config: ContextTransformConfig = {}) {
+  constructor(config: ContextRendererConfig = {}) {
     super();
     this.compressionEngine = config.compressionEngine;
     this.defaultOptions = config.defaultOptions;
@@ -54,12 +54,10 @@ export class ContextTransform extends Component {
    * Process activation facets and render context for them
    */
   private processActivations(state: ReadonlyVEILState): void {
-    console.log(`[ContextTransform] processActivations() called with ${state.facets.size} facets`);
-
     // Find activation facets that need context
     for (const [id, facet] of state.facets) {
       if (facet.type === 'agent-activation' && hasStateAspect(facet)) {
-        console.log(`[ContextTransform] Found agent-activation facet: ${id}`);
+        console.log(`[ContextRenderer] Found agent-activation facet: ${id}`);
         const activationState = facet.state as Record<string, any>;
         // Skip if context already rendered for this activation
         const contextExists = Array.from(state.facets.values()).some(f => 
@@ -69,11 +67,11 @@ export class ContextTransform extends Component {
         );
         
         if (contextExists) {
-          // console.log(`[ContextTransform] Skipping ${id} - context already exists`);
+          // console.log(`[ContextRenderer] Skipping ${id} - context already exists`);
           continue;
         }
         
-        // console.log(`[ContextTransform] Rendering context for activation ${id}...`);
+        // console.log(`[ContextRenderer] Rendering context for activation ${id}...`);
 
         // Get agent-specific options from activation (include top-level facet stream properties)
         const facetStreamId = (facet as any).streamId;
@@ -82,16 +80,16 @@ export class ContextTransform extends Component {
         
         // Get VEILStateManager from Space
         const space = this.space;
-        // console.log(`[ContextTransform] Space:`, !!space, 'hasVEILStateManager:', !!(space?.getVEILStateManager));
+        // console.log(`[ContextRenderer] Space:`, !!space, 'hasVEILStateManager:', !!(space?.getVEILStateManager));
         
         if (!space || !space.getVEILStateManager) {
-          console.error('[ContextTransform] Cannot access VEILStateManager - component not attached to Space');
-          console.error('[ContextTransform] Component:', this.id, 'Space:', space?.id);
+          console.error('[ContextRenderer] Cannot access VEILStateManager - component not attached to Space');
+          console.error('[ContextRenderer] Component:', this.id, 'Space:', space?.id);
           continue;
         }
         
         const veilStateManager = space.getVEILStateManager();
-        // console.log(`[ContextTransform] Got VEILStateManager, current sequence:`, veilStateManager.getState().currentSequence);
+        // console.log(`[ContextRenderer] Got VEILStateManager, current sequence:`, veilStateManager.getState().currentSequence);
         
         // Render context using the existing HUD logic
         const fullState = veilStateManager.getState();
