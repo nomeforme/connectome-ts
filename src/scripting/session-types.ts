@@ -28,11 +28,15 @@ export interface SessionTimeoutConfig {
 
 /**
  * Default timeout configuration
+ *
+ * Sessions have no timeout by default - since agents don't experience
+ * real-time passage, timeouts would be surprising. Callers can opt-in
+ * to timeouts by providing configuration.
  */
 export const DEFAULT_SESSION_TIMEOUT_CONFIG: SessionTimeoutConfig = {
-  idleTimeoutMs: 300000,      // 5 minutes
-  maxLifetimeMs: 3600000,     // 1 hour
-  warningBeforeMs: 30000,     // 30 seconds warning
+  idleTimeoutMs: 0,           // No idle timeout (0 = disabled)
+  maxLifetimeMs: 0,           // No max lifetime (0 = disabled)
+  warningBeforeMs: 30000,     // 30 seconds warning (if timeouts enabled)
 };
 
 // ============================================

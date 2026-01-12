@@ -30,6 +30,7 @@ import {
   isToolCallResultFacet,
 } from './types';
 import { getGlobalToolRegistry } from './tool-registry';
+import { createSessionClosedFacet, SessionClosedFacet } from './session-types';
 
 /**
  * Default configuration for script execution
@@ -42,11 +43,15 @@ const DEFAULT_CONFIG: Required<ScriptExecutionConfig> = {
 
 /**
  * Default session timeout configuration
+ *
+ * Sessions have no timeout by default - since agents don't experience
+ * real-time passage, timeouts would be surprising. Callers can opt-in
+ * to timeouts by providing configuration.
  */
 const DEFAULT_SESSION_CONFIG = {
-  idleTimeoutMs: 300000, // 5 minutes idle timeout
-  maxLifetimeMs: 3600000, // 1 hour max lifetime
-  warningBeforeMs: 30000, // 30 second warning before timeout
+  idleTimeoutMs: 0,       // No idle timeout (0 = disabled)
+  maxLifetimeMs: 0,       // No max lifetime (0 = disabled)
+  warningBeforeMs: 30000, // 30 second warning (if timeouts enabled)
 };
 
 /**
@@ -196,6 +201,11 @@ export class ScriptRunner extends Component {
       this.handleToolCallCompletedEvent(event, state);
     }
 
+    // 1b. Handle session:timeout events
+    if (event?.topic === 'session:timeout') {
+      this.handleSessionTimeoutEvent(event);
+    }
+
     // 2. Process new action facets from frame deltas
     for (const delta of frame.deltas) {
       if (delta.type === 'addFacet' && delta.facet.type === 'action') {
@@ -310,7 +320,7 @@ export class ScriptRunner extends Component {
   }
 
   /**
-   * Close a session
+   * Close a session (internal cleanup only - does not emit facets)
    */
   private closeSessionInternal(name: string, reason: string): string[] {
     const session = this.sessions.get(name);
@@ -328,6 +338,35 @@ export class ScriptRunner extends Component {
 
     console.log(`[ScriptExecutor] Closed session '${name}' (${reason})`);
     return interruptedScripts;
+  }
+
+  /**
+   * Handle session:timeout event - closes session and emits facet
+   */
+  private handleSessionTimeoutEvent(event: any): void {
+    const { sessionName, reason } = event.payload || {};
+    if (!sessionName) return;
+
+    // Check if session still exists (might have been closed explicitly)
+    if (!this.sessions.has(sessionName)) {
+      console.log(`[ScriptExecutor] Session '${sessionName}' already closed, ignoring timeout`);
+      return;
+    }
+
+    // Close the session
+    const interruptedScripts = this.closeSessionInternal(sessionName, reason);
+
+    // Emit session-closed facet
+    const facetId = `session-closed:${sessionName}:${Date.now()}`;
+    this.addOperation({
+      type: 'addFacet',
+      facet: createSessionClosedFacet(
+        facetId,
+        sessionName,
+        'timeout',  // Map all timeout reasons to 'timeout' for facet
+        interruptedScripts.length > 0 ? interruptedScripts : undefined
+      )
+    });
   }
 
   /**
@@ -398,14 +437,22 @@ export class ScriptRunner extends Component {
     if (this.sessionConfig.idleTimeoutMs > 0) {
       timeouts.idle = setTimeout(() => {
         console.log(`[ScriptExecutor] Session '${name}' timed out due to inactivity`);
-        this.closeSessionInternal(name, 'idle-timeout');
+        // Emit event to trigger frame - actual cleanup happens in execute()
+        this.emit({
+          topic: 'session:timeout',
+          payload: { sessionName: name, reason: 'idle-timeout' }
+        });
       }, this.sessionConfig.idleTimeoutMs);
     }
 
     if (this.sessionConfig.maxLifetimeMs > 0) {
       timeouts.max = setTimeout(() => {
         console.log(`[ScriptExecutor] Session '${name}' reached max lifetime`);
-        this.closeSessionInternal(name, 'max-lifetime');
+        // Emit event to trigger frame - actual cleanup happens in execute()
+        this.emit({
+          topic: 'session:timeout',
+          payload: { sessionName: name, reason: 'max-lifetime' }
+        });
       }, this.sessionConfig.maxLifetimeMs);
     }
 
@@ -424,7 +471,11 @@ export class ScriptRunner extends Component {
     if (this.sessionConfig.idleTimeoutMs > 0) {
       timeouts.idle = setTimeout(() => {
         console.log(`[ScriptExecutor] Session '${name}' timed out due to inactivity`);
-        this.closeSessionInternal(name, 'idle-timeout');
+        // Emit event to trigger frame - actual cleanup happens in execute()
+        this.emit({
+          topic: 'session:timeout',
+          payload: { sessionName: name, reason: 'idle-timeout' }
+        });
       }, this.sessionConfig.idleTimeoutMs);
     }
   }
