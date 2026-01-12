@@ -2,9 +2,10 @@
  * IncrementalToolDetector - Detects tool calls in streaming content
  *
  * Scans accumulated content for complete tool call patterns:
- * - {@element.action(...)} or {@element.action { ... }}
- * - <action name="...">...</action>
- * - <tool_call name="...">...</tool_call>
+ * - <cnctm:action name="...">...</cnctm:action>
+ * - <cnctm:function_calls><cnctm:invoke name="...">...</cnctm:invoke></cnctm:function_calls>
+ *
+ * The cnctm: prefix is the Connectome namespace, similar to Anthropic's antml: prefix.
  *
  * Returns the first complete tool call found, along with the content
  * before it (partial response) for continuation context.
@@ -22,7 +23,7 @@ export interface DetectedToolCall {
   /** End position in accumulated content */
   endIndex: number;
   /** The syntax type that matched */
-  syntax: 'curly-brace' | 'action-tag' | 'tool-call-tag';
+  syntax: 'cnctm-action' | 'cnctm-invoke';
 }
 
 export interface ToolDetectionResult {
@@ -41,19 +42,16 @@ export interface ToolDetectionResult {
 /**
  * Patterns for tool call detection
  *
- * Note: These patterns are intentionally conservative - they only match
- * complete, well-formed tool calls. Partial matches at chunk boundaries
- * are detected separately to avoid premature triggering.
+ * All patterns use the cnctm: namespace prefix (similar to Anthropic's antml: prefix).
+ * This makes tool calls clearly identifiable and avoids conflicts with user content.
  */
 const TOOL_PATTERNS = {
-  // {@element.action(...)} or {@element.action { ... }} or just {@element.action}
-  curlyBrace: /\{@([\w.-]+)(?:\s*\(([^)]*)\)|\s*\{([\s\S]*?)\})?\}/,
+  // <cnctm:action name="...">...</cnctm:action> (primary format)
+  cnctmActionTag: /<cnctm:action\s+name="([^"]+)"([^>]*)>([\s\S]*?)<\/cnctm:action>/,
 
-  // <action name="...">...</action>
-  actionTag: /<action\s+name="([^"]+)"([^>]*)>([\s\S]*?)<\/action>/,
-
-  // <tool_call name="...">...</tool_call>
-  toolCallTag: /<tool_call\s+name="([^"]+)">([\s\S]*?)<\/tool_call>/,
+  // <cnctm:function_calls><cnctm:invoke name="...">...</cnctm:invoke></cnctm:function_calls>
+  // (Anthropic-style format with Connectome namespace)
+  cnctmInvokeTag: /<cnctm:function_calls>\s*<cnctm:invoke\s+name="([^"]+)">([\s\S]*?)<\/cnctm:invoke>\s*<\/cnctm:function_calls>/,
 };
 
 /**
@@ -61,15 +59,13 @@ const TOOL_PATTERNS = {
  * (content that could be the start of a tool call but isn't complete yet)
  */
 const PARTIAL_INDICATORS = [
-  /\{@[\w.-]*$/, // Start of curly brace syntax
-  /\{@[\w.-]+\s*\([^)]*$/, // Curly brace with incomplete params
-  /\{@[\w.-]+\s*\{[^}]*$/, // Curly brace with incomplete block params
-  /<action\s*$/, // Start of action tag
-  /<action\s+[^>]*$/, // Incomplete action tag opening
-  /<action\s+name="[^"]*"[^>]*>[^<]*$/, // Action tag without closing
-  /<tool_call\s*$/, // Start of tool_call tag
-  /<tool_call\s+[^>]*$/, // Incomplete tool_call tag
-  /<tool_call\s+name="[^"]*">[^<]*$/, // tool_call without closing
+  /<cnctm:action\s*$/, // Start of cnctm:action tag
+  /<cnctm:action\s+[^>]*$/, // Incomplete cnctm:action tag opening
+  /<cnctm:action\s+name="[^"]*"[^>]*>[^<]*$/, // cnctm:action without closing
+  /<cnctm:function_calls\s*$/, // Start of cnctm:function_calls
+  /<cnctm:function_calls>\s*<cnctm:invoke\s*$/, // Start of cnctm:invoke
+  /<cnctm:function_calls>\s*<cnctm:invoke\s+[^>]*$/, // Incomplete cnctm:invoke
+  /<cnctm:function_calls>\s*<cnctm:invoke\s+name="[^"]*">[^<]*$/, // cnctm:invoke without closing
 ];
 
 /**
@@ -108,23 +104,17 @@ export function detectToolCall(content: string, toolMode: 'sync' | 'async' = 'sy
   // Try each pattern in order of priority
   const patterns: Array<{ regex: RegExp; syntax: DetectedToolCall['syntax']; extractName: (m: RegExpExecArray) => string; extractParams: (m: RegExpExecArray) => string }> = [
     {
-      regex: TOOL_PATTERNS.curlyBrace,
-      syntax: 'curly-brace',
+      regex: TOOL_PATTERNS.cnctmInvokeTag,
+      syntax: 'cnctm-invoke',
       extractName: (m) => m[1],
-      extractParams: (m) => m[2] || m[3] || ''
+      extractParams: (m) => m[2]
     },
     {
-      regex: TOOL_PATTERNS.actionTag,
-      syntax: 'action-tag',
+      regex: TOOL_PATTERNS.cnctmActionTag,
+      syntax: 'cnctm-action',
       extractName: (m) => m[1],
       extractParams: (m) => m[2] + (m[3] ? `\n${m[3]}` : '')
     },
-    {
-      regex: TOOL_PATTERNS.toolCallTag,
-      syntax: 'tool-call-tag',
-      extractName: (m) => m[1],
-      extractParams: (m) => m[2]
-    }
   ];
 
   let earliestMatch: { match: RegExpExecArray; pattern: typeof patterns[0] } | null = null;

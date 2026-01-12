@@ -12,6 +12,10 @@
  */
 
 import type { BaseFacet, AgentGeneratedAspect } from '../veil/facet-types';
+import type { ToolInvocationMode } from '../agent/types';
+
+// Re-export for convenience
+export type { ToolInvocationMode };
 
 // ============================================
 // ACTION STATUS
@@ -209,6 +213,66 @@ export type ActionResultFacet = BaseFacet & {
 };
 
 // ============================================
+// TOOL MODE CONTROL
+// ============================================
+
+/**
+ * Facet that controls the invocation mode for a specific tool.
+ *
+ * This allows agents or other space participants to dynamically change
+ * how a tool is invoked at runtime. The mode persists as system state
+ * until changed or expired.
+ *
+ * Usage:
+ * - Agent calls setToolMode("discord.send", "programmatic") to batch Discord sends
+ * - Human participant sets mode to control agent behavior
+ * - Mode preferences are resolved with priority (higher wins)
+ */
+export type ToolModePreferenceFacet = BaseFacet & {
+  type: 'tool-mode-preference';
+
+  /**
+   * Tool name this preference applies to.
+   * Use '*' to set a default mode for all tools.
+   */
+  toolName: string;
+
+  /**
+   * Desired invocation mode for this tool.
+   * - 'native': Execute immediately, each call can trigger agent re-activation
+   * - 'programmatic': Better for Lua batching, only final result triggers re-activation
+   */
+  preferredMode: ToolInvocationMode;
+
+  /**
+   * Who set this preference (agent ID, participant ID, or system identifier)
+   */
+  setBy: string;
+
+  /**
+   * Priority for conflict resolution. Higher priority wins.
+   * Suggested ranges:
+   * - 0-50: System defaults
+   * - 51-100: Agent preferences
+   * - 101-200: Human/participant overrides
+   * Default: 50
+   */
+  priority?: number;
+
+  /**
+   * Optional expiration timestamp (milliseconds since epoch).
+   * If set, preference is ignored after this time.
+   */
+  expiresAt?: number;
+
+  /**
+   * Optional: applies only to a specific agent.
+   * If undefined, applies to all agents in the space.
+   */
+  targetAgentId?: string;
+};
+
+// ============================================
 // EVENTS
 // ============================================
 
@@ -320,6 +384,20 @@ export interface ScriptableTool {
    * Used for routing tool calls to the correct handler.
    */
   handlerComponentType?: string;
+
+  /**
+   * Default invocation mode for this tool.
+   * - 'native': Execute immediately, each call can trigger agent re-activation
+   * - 'programmatic': Better for batching in Lua scripts, only final result triggers re-activation
+   * Default: 'native'
+   */
+  defaultInvocationMode?: ToolInvocationMode;
+
+  /**
+   * Whether participants can override this tool's mode at runtime via facets.
+   * Default: true
+   */
+  allowModeOverride?: boolean;
 }
 
 /**
@@ -406,6 +484,10 @@ export function isActionRequestFacet(facet: BaseFacet): facet is ActionRequestFa
 
 export function isActionResultFacet(facet: BaseFacet): facet is ActionResultFacet {
   return facet.type === 'action-result';
+}
+
+export function isToolModePreferenceFacet(facet: BaseFacet): facet is ToolModePreferenceFacet {
+  return facet.type === 'tool-mode-preference';
 }
 
 /**
@@ -557,6 +639,39 @@ export function createActionResultFacet(
   }
   if (alias) {
     facet.alias = alias;
+  }
+  return facet;
+}
+
+/**
+ * Create a new ToolModePreferenceFacet
+ */
+export function createToolModePreferenceFacet(
+  id: string,
+  toolName: string,
+  preferredMode: ToolInvocationMode,
+  setBy: string,
+  options: {
+    priority?: number;
+    expiresAt?: number;
+    targetAgentId?: string;
+  } = {}
+): ToolModePreferenceFacet {
+  const facet: ToolModePreferenceFacet = {
+    id,
+    type: 'tool-mode-preference',
+    toolName,
+    preferredMode,
+    setBy,
+  };
+  if (options.priority !== undefined) {
+    facet.priority = options.priority;
+  }
+  if (options.expiresAt !== undefined) {
+    facet.expiresAt = options.expiresAt;
+  }
+  if (options.targetAgentId !== undefined) {
+    facet.targetAgentId = options.targetAgentId;
   }
   return facet;
 }

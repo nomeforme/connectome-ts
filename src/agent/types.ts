@@ -16,6 +16,11 @@ export interface ParsedCompletion {
 }
 
 /**
+ * Invocation mode for tools - determines how tool calls are executed
+ */
+export type ToolInvocationMode = 'native' | 'programmatic';
+
+/**
  * Tool definition for the agent
  */
 export interface ToolDefinition {
@@ -35,6 +40,21 @@ export interface ToolDefinition {
   
   // Legacy handler (optional, for backward compatibility)
   handler?: (params: any) => Promise<any>;
+  
+  // Tool invocation mode control
+  /**
+   * Default invocation mode for this tool.
+   * - 'native': Execute immediately, each call can trigger agent re-activation
+   * - 'programmatic': Better for batching in Lua scripts, only final result triggers re-activation
+   * Default: 'native'
+   */
+  defaultInvocationMode?: ToolInvocationMode;
+  
+  /**
+   * Whether participants can override this tool's mode at runtime via facets.
+   * Default: true
+   */
+  allowModeOverride?: boolean;
 }
 
 /**
