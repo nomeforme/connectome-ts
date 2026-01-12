@@ -715,6 +715,12 @@ export class LuaSandbox {
     // Restore the Lua state from the serialized data
     sandbox.L = restoreVM(data, {});
 
+    // Re-open standard libraries - they contain JS functions that can't be serialized
+    // by the VM snapshot, so we need to re-inject them after restore
+    sandbox.openSafeLibraries();
+    sandbox.removeDangerousFunctions();
+    sandbox.setupInterop();
+
     // Re-register tools if provided (tools are functions that can't be serialized)
     if (toolsToRegister) {
       for (const toolName of toolsToRegister) {
