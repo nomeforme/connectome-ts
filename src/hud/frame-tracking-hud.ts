@@ -379,11 +379,16 @@ export class FrameTrackingHUD implements CompressibleHUD {
 
           case 'action':
             if (hasStateAspect(facet)) {
-              const { toolName, parameters } = facet.state as {
+              const { toolName, parameters, originalText } = facet.state as {
                 toolName?: string;
                 parameters?: Record<string, unknown>;
+                originalText?: string;
               };
-              if (toolName) {
+              // Use original text if available (preserves agent's exact formatting)
+              if (originalText) {
+                content = originalText;
+              } else if (toolName) {
+                // Fall back to reconstructed format for legacy facets
                 content = this.renderToolCall(toolName, parameters ?? {});
               }
             }

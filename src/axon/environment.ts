@@ -8,6 +8,7 @@
 import { Component } from '../spaces/component';
 import { VEILComponent, InteractiveComponent } from '../components/base-components';
 import { ControlPanelComponent } from '../widgets/control-panel';
+import { ControlPanelActionsListener, PanelScopeReceptor } from '../widgets/control-panel-receptors';
 import { BaseAfferent } from '../components/base-afferent';
 import { SpaceEvent } from '../spaces/types';
 import { persistent, persistable } from '../persistence/decorators';
@@ -66,6 +67,9 @@ export function createAxonEnvironment(): IAxonEnvironment {
     InteractiveComponent: InteractiveComponent as any,
     ControlPanelComponent: ControlPanelComponent as any,
     BaseAfferent: BaseAfferent as any,
+    // Control panel receptors (ControlPanelActionsListener aliased as ControlPanelActionsReceptor for compatibility)
+    ControlPanelActionsReceptor: ControlPanelActionsListener as any,
+    PanelScopeReceptor: PanelScopeReceptor as any,
 
     // Decorators
     persistent,

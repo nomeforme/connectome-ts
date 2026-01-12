@@ -204,11 +204,14 @@ export function parseAgentResponse(
     const { alias: _, ...otherAttributes } = attributes;
     const params: Record<string, any> = { ...otherAttributes, content };
 
+    // Capture the original text exactly as written by the agent
+    const originalText = actionTagMatch[0];
+
     const element: PositionedElement = {
       position,
       operation: {
         type: 'addFacet',
-        facet: createActionFacet(actionName, params, agentId, agentName, defaultStreamId, alias)
+        facet: createActionFacet(actionName, params, agentId, agentName, defaultStreamId, alias, originalText)
       }
     };
 
@@ -342,13 +345,21 @@ function createActionFacet(
   agentId: string,
   agentName: string | undefined,
   streamId: string,
-  alias?: string
+  alias?: string,
+  originalText?: string
 ): Facet {
   return {
     id: generateFacetId('agent-action'),
     type: 'action',
-    content: JSON.stringify(parameters),
-    state: { toolName, parameters, ...(alias ? { alias } : {}) },
+    // Use originalText if provided, otherwise fall back to JSON for legacy formats
+    content: originalText ?? JSON.stringify(parameters),
+    state: {
+      toolName,
+      parameters,
+      ...(alias ? { alias } : {}),
+      // Store originalText in state for HUD rendering to use
+      ...(originalText ? { originalText } : {})
+    },
     agentId,
     agentName,
     streamId
