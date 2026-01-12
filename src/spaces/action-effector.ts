@@ -137,15 +137,13 @@ export class ActionRouter extends Component {
         console.warn(`[ActionRouter] Target component not found: ${targetId}`);
 
         // Create action-result facet for component not found
-        const alias = (facet as any).state?.alias;
         const actionResultFacet = createActionResultFacet(
           `action-result:${facet.id}`,
           facet.id,
           null,  // parentActionId
           { success: false, error: `Target component '${targetId}' not found`, message: `Component not found` },
           actionContext.streamId,
-          actionContext.streamType,
-          alias
+          actionContext.streamType
         );
         this.addOperation({ type: 'addFacet', facet: actionResultFacet });
         continue;
@@ -164,22 +162,19 @@ export class ActionRouter extends Component {
           console.log(`[ActionRouter] Successfully executed action via component handler`);
 
           // Create action-result facet for success
-          const alias = (facet as any).state?.alias;
           const actionResultFacet = createActionResultFacet(
             `action-result:${facet.id}`,
             facet.id,
             null,  // parentActionId
             { success: true, result, message: `Action '${toolName}' completed` },
             actionContext.streamId,
-            actionContext.streamType,
-            alias
+            actionContext.streamType
           );
           this.addOperation({ type: 'addFacet', facet: actionResultFacet });
         } catch (error) {
           console.error(`[ActionRouter] Error executing component action:`, error);
 
           // Create action-result facet for failure
-          const alias = (facet as any).state?.alias;
           const errorMessage = error instanceof Error ? error.message : String(error);
           const actionResultFacet = createActionResultFacet(
             `action-result:${facet.id}`,
@@ -187,8 +182,7 @@ export class ActionRouter extends Component {
             null,  // parentActionId
             { success: false, error: errorMessage, message: `Action '${toolName}' failed` },
             actionContext.streamId,
-            actionContext.streamType,
-            alias
+            actionContext.streamType
           );
           this.addOperation({ type: 'addFacet', facet: actionResultFacet });
         }
@@ -196,15 +190,13 @@ export class ActionRouter extends Component {
         console.warn(`[ActionRouter] No handler found for action '${action}' on component '${targetId}'`);
 
         // Create action-result facet for handler not found
-        const alias = (facet as any).state?.alias;
         const actionResultFacet = createActionResultFacet(
           `action-result:${facet.id}`,
           facet.id,
           null,  // parentActionId
           { success: false, error: `No handler found for action '${action}'`, message: `Action handler not found` },
           actionContext.streamId,
-          actionContext.streamType,
-          alias
+          actionContext.streamType
         );
         this.addOperation({ type: 'addFacet', facet: actionResultFacet });
       }

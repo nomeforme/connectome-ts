@@ -58,7 +58,6 @@ interface RunningScript {
   agentName?: string;
   streamId?: string;
   streamType?: string;
-  alias?: string;
   code: string;
   timeoutMs: number | null;
   parentScriptId: string | null;
@@ -584,7 +583,7 @@ export class ScriptRunner extends Component {
   private handleLuaAction(facet: Facet): void {
     if (!hasStateAspect(facet)) return;
 
-    const actionState = facet.state as { toolName: string; parameters?: Record<string, any>; alias?: string };
+    const actionState = facet.state as { toolName: string; parameters?: Record<string, any> };
     this.ensureToolRegistry();
 
     const params = actionState.parameters || {};
@@ -598,7 +597,6 @@ export class ScriptRunner extends Component {
     const agentName = (facet as any).agentName;
     const streamId = (facet as any).streamId;
     const streamType = (facet as any).streamType;
-    const alias = actionState.alias || params.alias;
     const sessionName = params.session as string | undefined;
 
     let timeoutMs: number | null = this.config.defaultTimeoutMs;
@@ -635,8 +633,7 @@ export class ScriptRunner extends Component {
             null,
             { success: false, error: `Session error: ${error.message}`, message: 'Failed to create session' },
             streamId,
-            streamType,
-            alias
+            streamType
           ),
         });
         return;
@@ -675,8 +672,7 @@ export class ScriptRunner extends Component {
           null,
           { success: false, error: error.message, message: 'Script syntax error' },
           streamId,
-          streamType,
-          alias
+          streamType
         ),
       });
 
@@ -710,7 +706,6 @@ export class ScriptRunner extends Component {
       agentName,
       streamId,
       streamType,
-      alias,
       code,
       timeoutMs,
       parentScriptId: params.parentScriptId || null,
@@ -893,8 +888,7 @@ export class ScriptRunner extends Component {
         ? { success: true, result: (script.result as any).result, message: 'Script completed' }
         : { success: false, error: (script.result as any).error || 'Script failed', message: 'Script failed' },
       script.streamId,
-      script.streamType,
-      script.alias
+      script.streamType
     );
     this.addOperation({ type: 'addFacet', facet: actionResultFacet });
 

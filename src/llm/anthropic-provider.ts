@@ -480,6 +480,18 @@ export class AnthropicProvider implements LLMProvider {
       });
 
     } catch (error) {
+      // If the abort signal was triggered, this is an intentional interruption (tool call processing)
+      // Don't throw an error - just return gracefully
+      if (options?.signal?.aborted) {
+        console.log('[AnthropicProvider:generateStream] Stream aborted gracefully (tool call detected)');
+        // Yield a final done chunk so the caller knows the stream ended
+        yield {
+          content: '',
+          done: true
+        };
+        return;
+      }
+
       console.error('[AnthropicProvider:generateStream] Stream error:', error);
 
       tracer?.record({

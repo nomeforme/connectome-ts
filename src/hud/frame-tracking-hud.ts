@@ -408,15 +408,13 @@ export class FrameTrackingHUD implements CompressibleHUD {
               result?: unknown;
               error?: string;
               message?: string;
-              alias?: string;
             };
             content = this.renderToolResult(
               actionResultFacet.actionId || facet.id,
               actionResultFacet.success ?? false,
               actionResultFacet.result,
               actionResultFacet.error,
-              actionResultFacet.message,
-              actionResultFacet.alias
+              actionResultFacet.message
             );
             break;
           }
@@ -1141,15 +1139,13 @@ export class FrameTrackingHUD implements CompressibleHUD {
         result?: unknown;
         error?: string;
         message?: string;
-        alias?: string;
       };
       return this.renderToolResult(
         actionResultFacet.actionId || facet.id,
         actionResultFacet.success ?? false,
         actionResultFacet.result,
         actionResultFacet.error,
-        actionResultFacet.message,
-        actionResultFacet.alias
+        actionResultFacet.message
       );
     }
 
@@ -1264,11 +1260,9 @@ export class FrameTrackingHUD implements CompressibleHUD {
     return parts.join('\n');
   }
 
-  private renderToolResult(actionId: string, success: boolean, result: unknown, error?: string, message?: string, alias?: string): string {
+  private renderToolResult(actionId: string, success: boolean, result: unknown, error?: string, message?: string): string {
     // Render as <action_result> to pair with <action>
-    // Include alias attribute if provided (for correlating results with actions)
-    const aliasAttr = alias ? ` alias="${this.escapeXml(alias)}"` : '';
-    const parts = [`<action_result action_id="${this.escapeXml(actionId)}"${aliasAttr} success="${success}">`];
+    const parts = [`<action_result action_id="${this.escapeXml(actionId)}" success="${success}">`];
 
     if (success) {
       if (result !== undefined) {

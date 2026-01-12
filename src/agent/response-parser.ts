@@ -93,16 +93,12 @@ export function parseAgentResponse(
     // Restore backticks in parameters
     restoreBackticksInParams(parameters, backtickPlaceholders);
 
-    // Extract alias from parameters (alias is metadata, not a tool parameter)
-    const alias = parameters.alias as string | undefined;
-    if (alias) delete parameters.alias;
-
     const toolName = pathParts.join('.');
     const element: PositionedElement = {
       position,
       operation: {
         type: 'addFacet',
-        facet: createActionFacet(toolName, parameters, agentId, agentName, defaultStreamId, alias)
+        facet: createActionFacet(toolName, parameters, agentId, agentName, defaultStreamId)
       }
     };
 
@@ -199,10 +195,7 @@ export function parseAgentResponse(
       content = content.replace(/^\n/, '').replace(/\n\s*$/, '');
     }
 
-    // Extract alias before merging into params (alias is metadata, not a tool parameter)
-    const alias = attributes.alias as string | undefined;
-    const { alias: _, ...otherAttributes } = attributes;
-    const params: Record<string, any> = { ...otherAttributes, content };
+    const params: Record<string, any> = { ...attributes, content };
 
     // Capture the original text exactly as written by the agent
     const originalText = actionTagMatch[0];
@@ -211,7 +204,7 @@ export function parseAgentResponse(
       position,
       operation: {
         type: 'addFacet',
-        facet: createActionFacet(actionName, params, agentId, agentName, defaultStreamId, alias, originalText)
+        facet: createActionFacet(actionName, params, agentId, agentName, defaultStreamId, originalText)
       }
     };
 
@@ -345,7 +338,6 @@ function createActionFacet(
   agentId: string,
   agentName: string | undefined,
   streamId: string,
-  alias?: string,
   originalText?: string
 ): Facet {
   return {
@@ -356,7 +348,6 @@ function createActionFacet(
     state: {
       toolName,
       parameters,
-      ...(alias ? { alias } : {}),
       // Store originalText in state for HUD rendering to use
       ...(originalText ? { originalText } : {})
     },

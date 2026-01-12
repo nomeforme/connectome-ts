@@ -203,9 +203,6 @@ export type ActionResultFacet = BaseFacet & {
 
   /** Stream type for proper routing (e.g., 'discord') */
   streamType?: string;
-
-  /** User-defined alias for correlating results with actions */
-  alias?: string;
 };
 
 // ============================================
@@ -539,8 +536,7 @@ export function createActionResultFacet(
   parentActionId: string | null,
   outcome: { success: true; result?: unknown; message?: string } | { success: false; error: string; message?: string },
   streamId?: string,
-  streamType?: string,
-  alias?: string
+  streamType?: string
 ): ActionResultFacet {
   const facet: ActionResultFacet = {
     id,
@@ -554,9 +550,6 @@ export function createActionResultFacet(
   }
   if (streamType) {
     facet.streamType = streamType;
-  }
-  if (alias) {
-    facet.alias = alias;
   }
   return facet;
 }
