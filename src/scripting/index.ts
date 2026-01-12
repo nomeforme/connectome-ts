@@ -22,16 +22,10 @@
 // Types
 export * from './types';
 
-// Session Types
-export * from './session-types';
-
 // Lua Sandbox
 export { LuaSandbox, createLuaSandbox, LuaExecutionResult } from './lua-sandbox';
 
-// Lua Session Manager
-export { LuaSessionManager, createLuaSessionManager } from './lua-session-manager';
-
-// Script Executor
+// Script Executor (includes session management)
 export { ScriptExecutorEffector, createScriptExecutor } from './script-executor';
 
 // Action Result Processor (Maintainer that emits action:completed events)

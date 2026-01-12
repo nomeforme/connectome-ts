@@ -1,12 +1,13 @@
 /**
- * ScriptExecutorEffector - Executes Lua scripts from agent actions
+ * ScriptExecutorEffector - Executes Lua scripts with persistent session support
  *
  * FLEX Component (priority 300 - Effector) that:
  * 1. Watches for 'lua' action facets from agents
- * 2. Creates ScriptExecutionFacet and manages lifecycle
+ * 2. Manages persistent Lua sessions (REPL mode)
  * 3. Executes scripts in sandboxed Lua environment
  * 4. Yields on tool calls, waits for results
- * 5. Creates ScriptResultFacet on completion
+ * 5. Handles session:* actions (open, close, list, inspect)
+ * 6. Persists session VM states across snapshots using fengari's saveVM/restoreVM
  */
 
 import { Component } from '../spaces/component';
@@ -16,8 +17,8 @@ import { priorityConstraint, ComponentPriority } from '../spaces/constraints';
 import { Facet, hasStateAspect } from '../veil/types';
 import { LuaSandbox, createLuaSandbox, LuaExecutionResult } from './lua-sandbox';
 import { installBuiltins } from './builtins';
+import { persistable, persistent, Serializers } from '../persistence/decorators';
 import {
-  ScriptExecutionFacet,
   ScriptResultFacet,
   ToolCallResultFacet,
   ScriptExecutionConfig,
@@ -29,7 +30,6 @@ import {
   isToolCallResultFacet,
 } from './types';
 import { getGlobalToolRegistry } from './tool-registry';
-import { LuaSessionManager } from './lua-session-manager';
 
 /**
  * Default configuration for script execution
@@ -38,6 +38,15 @@ const DEFAULT_CONFIG: Required<ScriptExecutionConfig> = {
   defaultTimeoutMs: 30000,
   maxTimeoutMs: 300000, // 5 minutes max
   allowNoTimeout: false,
+};
+
+/**
+ * Default session timeout configuration
+ */
+const DEFAULT_SESSION_CONFIG = {
+  idleTimeoutMs: 300000, // 5 minutes idle timeout
+  maxLifetimeMs: 3600000, // 1 hour max lifetime
+  warningBeforeMs: 30000, // 30 second warning before timeout
 };
 
 /**
@@ -67,18 +76,58 @@ interface RunningScript {
 }
 
 /**
- * ScriptExecutorEffector manages Lua script execution lifecycle
+ * Runtime session state (not persisted directly)
  */
+interface LuaSession {
+  id: string;
+  sandbox: LuaSandbox;
+  createdAt: Date;
+  lastActivityAt: Date;
+  pendingScripts: Set<string>;
+  status: 'active' | 'closing' | 'closed';
+}
+
+/**
+ * Serialized session state for persistence
+ */
+interface SerializedSession {
+  id: string;
+  vmState: string; // Base64-encoded Uint8Array from saveVM
+  toolNames: string[]; // Tools to re-register on restore
+  createdAt: string;
+  lastActivityAt: string;
+}
+
+/**
+ * Custom serializer for session states using VM serialization
+ */
+const sessionStatesSerializer = Serializers.object<SerializedSession[]>(
+  (states: SerializedSession[]) => states,
+  (data: any) => data as SerializedSession[]
+);
+
+/**
+ * ScriptExecutorEffector manages Lua script execution with integrated session support
+ */
+@persistable(1)
 export class ScriptExecutorEffector extends Component {
   constraints = [priorityConstraint(ComponentPriority.EFFECTOR)];
 
-  // Subscribe to activation:completed (to process lua actions) and tool-call:completed (for script resumption)
-  topics = ['activation:completed', 'tool-call:completed'];
+  // Subscribe to all events (need to catch activation:completed, tool-call:completed, and action:created for session:*)
+  topics: '*' = '*';
 
   private config: Required<ScriptExecutionConfig>;
+  private sessionConfig = DEFAULT_SESSION_CONFIG;
   private runningScripts: Map<string, RunningScript> = new Map();
   private toolRegistry?: IToolRegistry;
-  private sessionManager?: LuaSessionManager;
+
+  // Session management (merged from LuaSessionManager)
+  private sessions: Map<string, LuaSession> = new Map();
+  private sessionTimeouts: Map<string, { idle?: ReturnType<typeof setTimeout>; max?: ReturnType<typeof setTimeout>; warning?: ReturnType<typeof setTimeout> }> = new Map();
+
+  // Persisted session states
+  @persistent({ serializer: sessionStatesSerializer })
+  private sessionStates: SerializedSession[] = [];
 
   constructor(config: ScriptExecutionConfig = {}) {
     super();
@@ -92,52 +141,14 @@ export class ScriptExecutorEffector extends Component {
     this.toolRegistry = registry;
   }
 
-  /**
-   * Set the session manager (can be injected or resolved from space)
-   */
-  setSessionManager(manager: LuaSessionManager): void {
-    this.sessionManager = manager;
-  }
-
   onMount(): void {
     this.ensureToolRegistry();
-    this.ensureSessionManager();
-  }
 
-  /**
-   * Ensure session manager is available
-   */
-  private ensureSessionManager(): void {
-    if (this.sessionManager) return;
-
-    // Try to get from reference first
-    this.sessionManager = this.getReference<LuaSessionManager>('luaSessionManager');
-    if (this.sessionManager) return;
-
-    // Fall back to finding by component type in space
-    if (this.space) {
-      const component = this.space.components.find(
-        c => c.constructor.name === 'LuaSessionManager'
-      );
-      if (component) {
-        this.sessionManager = component as LuaSessionManager;
-      }
-    }
-  }
-
-  /**
-   * Ensure tool registry is available (lazy initialization for when onMount is delayed)
-   */
-  private ensureToolRegistry(): void {
-    if (this.toolRegistry) return;
-
-    // Try to get tool registry from space references, fall back to global
-    this.toolRegistry = this.getReference<IToolRegistry>('toolRegistry');
-    if (!this.toolRegistry) {
-      this.toolRegistry = getGlobalToolRegistry();
-      console.log('[ScriptExecutor] Using global registry, tools:', this.toolRegistry?.getTools?.().map(t => t.name) || 'N/A');
-    } else {
-      console.log('[ScriptExecutor] Using reference registry, tools:', this.toolRegistry?.getTools?.().map(t => t.name) || 'N/A');
+    // Restore sessions from persisted state
+    console.log(`[ScriptExecutor] onMount called, sessionStates.length = ${this.sessionStates?.length ?? 'undefined'}`);
+    if (this.sessionStates && this.sessionStates.length > 0) {
+      console.log(`[ScriptExecutor] Restoring ${this.sessionStates.length} sessions: ${this.sessionStates.map(s => s.id).join(', ')}`);
+      this.restoreSessions();
     }
   }
 
@@ -147,36 +158,58 @@ export class ScriptExecutorEffector extends Component {
       if (script.timeoutHandle) {
         clearTimeout(script.timeoutHandle);
       }
-      // Only destroy one-off sandboxes, not session-based ones
       if (!script.isSessionScript) {
         script.sandbox.destroy();
-      } else if (script.sessionName && this.sessionManager) {
-        this.sessionManager.unregisterScript(script.sessionName, script.scriptId);
       }
     }
     this.runningScripts.clear();
+
+    // Clean up all sessions
+    for (const [sessionId] of this.sessions) {
+      this.closeSessionInternal(sessionId, 'shutdown');
+    }
+    this.sessions.clear();
+    this.clearAllSessionTimeouts();
   }
 
   /**
-   * FLEX execute - process frame for lua actions and tool-call:completed events
+   * Ensure tool registry is available
    */
+  private ensureToolRegistry(): void {
+    if (this.toolRegistry) return;
+
+    this.toolRegistry = this.getReference<IToolRegistry>('toolRegistry');
+    if (!this.toolRegistry) {
+      this.toolRegistry = getGlobalToolRegistry();
+    }
+  }
+
+  // ============================================
+  // FLEX EXECUTE
+  // ============================================
+
   execute(context: ExecutionContext): void {
     const { frame, state, event } = context;
     if (!frame?.deltas) return;
 
-    // 1. Handle tool-call:completed events (event-driven script resumption)
+    // 1. Handle tool-call:completed events
     if (event?.topic === 'tool-call:completed') {
       this.handleToolCallCompletedEvent(event, state);
     }
 
-    // 2. Process new lua action facets from frame deltas
+    // 2. Process new action facets from frame deltas
     for (const delta of frame.deltas) {
       if (delta.type === 'addFacet' && delta.facet.type === 'action') {
-        this.handleActionFacet(delta.facet);
+        const actionState = (delta.facet as any).state as { toolName: string };
+        if (actionState.toolName === 'lua') {
+          this.handleLuaAction(delta.facet);
+        } else if (actionState.toolName.startsWith('session:')) {
+          this.handleSessionAction(delta.facet);
+        }
       }
     }
 
-    // 3. Process any scripts that need to start or resume
+    // 3. Process scripts that need to start or resume
     for (const [, script] of this.runningScripts) {
       if (script.completed) continue;
 
@@ -207,12 +240,9 @@ export class ScriptExecutorEffector extends Component {
           clearTimeout(script.timeoutHandle);
         }
 
-        // For session scripts: unregister from session, don't destroy sandbox
-        // For one-off scripts: destroy sandbox
-        if (script.isSessionScript && script.sessionName && this.sessionManager) {
-          this.sessionManager.unregisterScript(script.sessionName, scriptId);
-          // Touch session to update last activity
-          this.sessionManager.touchSession(script.sessionName);
+        if (script.isSessionScript && script.sessionName) {
+          // Touch session to trigger serialization
+          this.touchSession(script.sessionName);
         } else {
           script.sandbox.destroy();
         }
@@ -220,87 +250,342 @@ export class ScriptExecutorEffector extends Component {
         this.runningScripts.delete(scriptId);
       }
     }
+
+    // 5. Serialize sessions for persistence (on every frame to catch changes)
+    this.serializeSessions();
+  }
+
+  // ============================================
+  // SESSION MANAGEMENT
+  // ============================================
+
+  /**
+   * Get or create a session by name
+   */
+  private getOrCreateSession(name: string): LuaSession {
+    let session = this.sessions.get(name);
+
+    if (session) {
+      session.lastActivityAt = new Date();
+      this.resetIdleTimeout(name);
+      return session;
+    }
+
+    // Create new session
+    const sandbox = createLuaSandbox();
+    installBuiltins(sandbox);
+
+    // Register tools
+    if (this.toolRegistry) {
+      const tools = this.toolRegistry.getTools();
+      for (const tool of tools) {
+        sandbox.registerTool(tool.name, (...args) => args);
+      }
+    }
+
+    session = {
+      id: name,
+      sandbox,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      pendingScripts: new Set(),
+      status: 'active',
+    };
+
+    this.sessions.set(name, session);
+    this.scheduleSessionTimeouts(name);
+
+    console.log(`[ScriptExecutor] Created session '${name}'`);
+    return session;
   }
 
   /**
-   * Handle tool-call:completed event - find the result facet and mark script for resume
+   * Touch session to update activity timestamp
    */
-  private handleToolCallCompletedEvent(event: any, state: ReadonlyVEILState): void {
-    const { toolCallId, parentScriptId, success } = event.payload || {};
-    if (!toolCallId || !parentScriptId) return;
+  private touchSession(sessionName: string): void {
+    const session = this.sessions.get(sessionName);
+    if (session) {
+      session.lastActivityAt = new Date();
+      this.resetIdleTimeout(sessionName);
+    }
+  }
 
-    // Find the running script waiting for this tool call
-    const script = this.runningScripts.get(parentScriptId);
-    if (!script) {
-      // Script may have timed out or been cancelled
-      return;
+  /**
+   * Close a session
+   */
+  private closeSessionInternal(name: string, reason: string): string[] {
+    const session = this.sessions.get(name);
+    if (!session) return [];
+
+    session.status = 'closing';
+    const interruptedScripts = Array.from(session.pendingScripts);
+
+    this.clearSessionTimeouts(name);
+    session.sandbox.destroy();
+    this.sessions.delete(name);
+
+    // Remove from persisted states
+    this.sessionStates = this.sessionStates.filter(s => s.id !== name);
+
+    console.log(`[ScriptExecutor] Closed session '${name}' (${reason})`);
+    return interruptedScripts;
+  }
+
+  /**
+   * Serialize all active sessions for persistence
+   */
+  private serializeSessions(): void {
+    const newStates: SerializedSession[] = [];
+
+    for (const session of this.sessions.values()) {
+      if (session.status !== 'active') continue;
+
+      try {
+        const vmState = session.sandbox.saveState();
+        const toolNames = Array.from(session.sandbox.getRegisteredTools());
+
+        newStates.push({
+          id: session.id,
+          vmState: this.uint8ArrayToBase64(vmState),
+          toolNames,
+          createdAt: session.createdAt.toISOString(),
+          lastActivityAt: session.lastActivityAt.toISOString(),
+        });
+      } catch (error: any) {
+        console.error(`[ScriptExecutor] Failed to serialize session '${session.id}':`, error.message);
+      }
     }
 
-    if (script.pendingToolCallId !== toolCallId) {
-      // Not the tool call we're waiting for
-      return;
-    }
+    this.sessionStates = newStates;
+  }
 
-    // Look up the result facet from VEIL state
-    const resultFacet = this.findToolCallResultFacet(toolCallId, state);
+  /**
+   * Restore sessions from persisted state
+   */
+  private restoreSessions(): void {
+    for (const state of this.sessionStates) {
+      try {
+        const vmState = this.base64ToUint8Array(state.vmState);
+        const sandbox = LuaSandbox.restoreFromState(vmState, state.toolNames);
 
-    // Clear pending tool call
-    script.pendingToolCallId = undefined;
-
-    // Mark for resume
-    if (resultFacet && resultFacet.success) {
-      script.needsResume = true;
-      script.resumeValue = resultFacet.result;
-    } else if (resultFacet) {
-      // Tool call failed - complete script with error
-      script.completed = true;
-      script.result = {
-        success: false,
-        error: resultFacet.error || 'Tool call failed',
-        errorType: 'tool-error',
-      };
-    } else {
-      // No result facet found - use event success flag
-      if (success) {
-        script.needsResume = true;
-        script.resumeValue = undefined;
-      } else {
-        script.completed = true;
-        script.result = {
-          success: false,
-          error: 'Tool call failed (no result facet)',
-          errorType: 'tool-error',
+        const session: LuaSession = {
+          id: state.id,
+          sandbox,
+          createdAt: new Date(state.createdAt),
+          lastActivityAt: new Date(state.lastActivityAt),
+          pendingScripts: new Set(),
+          status: 'active',
         };
+
+        this.sessions.set(state.id, session);
+        this.scheduleSessionTimeouts(state.id);
+
+        console.log(`[ScriptExecutor] Restored session '${state.id}'`);
+      } catch (error: any) {
+        console.error(`[ScriptExecutor] Failed to restore session '${state.id}':`, error.message);
       }
     }
   }
 
-  /**
-   * Find a tool-call-result facet in VEIL state by toolCallId
-   */
-  private findToolCallResultFacet(toolCallId: string, state: ReadonlyVEILState): ToolCallResultFacet | undefined {
-    if (!state?.facets) return undefined;
+  // ============================================
+  // SESSION TIMEOUT MANAGEMENT
+  // ============================================
 
-    for (const facet of state.facets.values()) {
-      if (isToolCallResultFacet(facet) && facet.toolCallId === toolCallId) {
-        return facet;
-      }
+  private scheduleSessionTimeouts(name: string): void {
+    this.clearSessionTimeouts(name);
+
+    const timeouts: { idle?: ReturnType<typeof setTimeout>; max?: ReturnType<typeof setTimeout>; warning?: ReturnType<typeof setTimeout> } = {};
+
+    if (this.sessionConfig.idleTimeoutMs > 0) {
+      timeouts.idle = setTimeout(() => {
+        console.log(`[ScriptExecutor] Session '${name}' timed out due to inactivity`);
+        this.closeSessionInternal(name, 'idle-timeout');
+      }, this.sessionConfig.idleTimeoutMs);
     }
-    return undefined;
+
+    if (this.sessionConfig.maxLifetimeMs > 0) {
+      timeouts.max = setTimeout(() => {
+        console.log(`[ScriptExecutor] Session '${name}' reached max lifetime`);
+        this.closeSessionInternal(name, 'max-lifetime');
+      }, this.sessionConfig.maxLifetimeMs);
+    }
+
+    this.sessionTimeouts.set(name, timeouts);
   }
 
-  /**
-   * Handle a new action facet - check if it's a lua script
-   */
-  private handleActionFacet(facet: Facet): void {
+  private resetIdleTimeout(name: string): void {
+    const timeouts = this.sessionTimeouts.get(name);
+    if (!timeouts) {
+      this.scheduleSessionTimeouts(name);
+      return;
+    }
+
+    if (timeouts.idle) clearTimeout(timeouts.idle);
+
+    if (this.sessionConfig.idleTimeoutMs > 0) {
+      timeouts.idle = setTimeout(() => {
+        console.log(`[ScriptExecutor] Session '${name}' timed out due to inactivity`);
+        this.closeSessionInternal(name, 'idle-timeout');
+      }, this.sessionConfig.idleTimeoutMs);
+    }
+  }
+
+  private clearSessionTimeouts(name: string): void {
+    const timeouts = this.sessionTimeouts.get(name);
+    if (timeouts) {
+      if (timeouts.idle) clearTimeout(timeouts.idle);
+      if (timeouts.max) clearTimeout(timeouts.max);
+      if (timeouts.warning) clearTimeout(timeouts.warning);
+      this.sessionTimeouts.delete(name);
+    }
+  }
+
+  private clearAllSessionTimeouts(): void {
+    for (const [name] of this.sessionTimeouts) {
+      this.clearSessionTimeouts(name);
+    }
+  }
+
+  // ============================================
+  // SESSION ACTION HANDLING
+  // ============================================
+
+  private handleSessionAction(facet: Facet): void {
+    if (!hasStateAspect(facet)) return;
+
+    const actionState = facet.state as { toolName: string; parameters?: Record<string, any> };
+    const params = actionState.parameters || {};
+    const streamId = (facet as any).streamId;
+    const streamType = (facet as any).streamType;
+    const actionId = facet.id;
+
+    switch (actionState.toolName) {
+      case 'session:open':
+        this.handleSessionOpen(actionId, params, streamId, streamType);
+        break;
+      case 'session:close':
+        this.handleSessionClose(actionId, params, streamId, streamType);
+        break;
+      case 'session:list':
+        this.handleSessionList(actionId, streamId, streamType);
+        break;
+      case 'session:inspect':
+        this.handleSessionInspect(actionId, params, streamId, streamType);
+        break;
+    }
+  }
+
+  private handleSessionOpen(actionId: string, params: Record<string, any>, streamId?: string, streamType?: string): void {
+    const name = params.name as string;
+    if (!name) {
+      this.emitSessionResult(actionId, { success: false, error: 'Session name is required' }, streamId, streamType);
+      return;
+    }
+
+    try {
+      const existing = this.sessions.has(name);
+      const session = this.getOrCreateSession(name);
+
+      this.emitSessionResult(actionId, {
+        success: true,
+        result: {
+          sessionId: name,
+          created: !existing,
+          globals: session.sandbox.getUserGlobals(),
+        },
+      }, streamId, streamType);
+    } catch (error: any) {
+      this.emitSessionResult(actionId, { success: false, error: error.message }, streamId, streamType);
+    }
+  }
+
+  private handleSessionClose(actionId: string, params: Record<string, any>, streamId?: string, streamType?: string): void {
+    const name = params.name as string;
+    if (!name) {
+      this.emitSessionResult(actionId, { success: false, error: 'Session name is required' }, streamId, streamType);
+      return;
+    }
+
+    if (!this.sessions.has(name)) {
+      this.emitSessionResult(actionId, { success: false, error: `Session '${name}' not found` }, streamId, streamType);
+      return;
+    }
+
+    const interruptedScripts = this.closeSessionInternal(name, 'explicit');
+    this.emitSessionResult(actionId, {
+      success: true,
+      result: { sessionId: name, interruptedScripts },
+    }, streamId, streamType);
+  }
+
+  private handleSessionList(actionId: string, streamId?: string, streamType?: string): void {
+    const sessions = Array.from(this.sessions.values()).map(s => ({
+      id: s.id,
+      createdAt: s.createdAt.toISOString(),
+      lastActivityAt: s.lastActivityAt.toISOString(),
+      pendingScriptCount: s.pendingScripts.size,
+      status: s.status,
+    }));
+
+    this.emitSessionResult(actionId, { success: true, result: sessions }, streamId, streamType);
+  }
+
+  private handleSessionInspect(actionId: string, params: Record<string, any>, streamId?: string, streamType?: string): void {
+    const name = params.name as string;
+    if (!name) {
+      this.emitSessionResult(actionId, { success: false, error: 'Session name is required' }, streamId, streamType);
+      return;
+    }
+
+    const session = this.sessions.get(name);
+    if (!session) {
+      this.emitSessionResult(actionId, { success: false, error: `Session '${name}' not found` }, streamId, streamType);
+      return;
+    }
+
+    this.emitSessionResult(actionId, {
+      success: true,
+      result: {
+        sessionId: name,
+        globals: session.sandbox.getUserGlobals(),
+        createdAt: session.createdAt.toISOString(),
+        lastActivityAt: session.lastActivityAt.toISOString(),
+        pendingScriptCount: session.pendingScripts.size,
+      },
+    }, streamId, streamType);
+  }
+
+  private emitSessionResult(
+    actionId: string,
+    outcome: { success: true; result?: unknown } | { success: false; error: string },
+    streamId?: string,
+    streamType?: string
+  ): void {
+    const resultId = `action-result:${actionId}`;
+    this.addOperation({
+      type: 'addFacet',
+      facet: createActionResultFacet(
+        resultId,
+        actionId,
+        null,
+        outcome.success
+          ? { success: true, result: outcome.result, message: 'Session action completed' }
+          : { success: false, error: outcome.error, message: 'Session action failed' },
+        streamId,
+        streamType
+      ),
+    });
+  }
+
+  // ============================================
+  // LUA SCRIPT EXECUTION
+  // ============================================
+
+  private handleLuaAction(facet: Facet): void {
     if (!hasStateAspect(facet)) return;
 
     const actionState = facet.state as { toolName: string; parameters?: Record<string, any>; alias?: string };
-    if (actionState.toolName !== 'lua') return;
-
-    // Ensure tool registry is available (may be delayed due to isRestoring=true)
     this.ensureToolRegistry();
-    this.ensureSessionManager();
 
     const params = actionState.parameters || {};
     const code = params.content as string;
@@ -309,54 +594,43 @@ export class ScriptExecutorEffector extends Component {
       return;
     }
 
-    // Get agent info and stream context from facet
     const agentId = (facet as any).agentId || 'unknown';
     const agentName = (facet as any).agentName;
     const streamId = (facet as any).streamId;
     const streamType = (facet as any).streamType;
-    // Alias can be in state (from response-parser) or parameters
     const alias = actionState.alias || params.alias;
-    // Session param for persistent sessions
     const sessionName = params.session as string | undefined;
 
-    // Calculate timeout
     let timeoutMs: number | null = this.config.defaultTimeoutMs;
     if (params.timeout !== undefined) {
       if (params.timeout === 0 || params.timeout === null) {
         if (this.config.allowNoTimeout) {
           timeoutMs = null;
-        } else {
-          console.warn('[ScriptExecutor] No-timeout scripts not allowed, using default');
         }
       } else {
         timeoutMs = Math.min(params.timeout, this.config.maxTimeoutMs);
       }
     }
 
-    // Create script ID
     const scriptId = `script:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-    // Determine if using a session or one-off execution
     let sandbox: LuaSandbox;
     let isSessionScript = false;
 
-    if (sessionName && this.sessionManager) {
-      // Session-based execution: get or create session
+    if (sessionName) {
+      // Session-based execution
       try {
-        const session = this.sessionManager.getOrCreateSession(sessionName);
+        const session = this.getOrCreateSession(sessionName);
         sandbox = session.sandbox;
         isSessionScript = true;
-        // Register this script with the session
-        this.sessionManager.registerScript(sessionName, scriptId);
+        session.pendingScripts.add(scriptId);
         console.log(`[ScriptExecutor] Using session '${sessionName}' for script ${scriptId}`);
       } catch (error: any) {
-        // Session creation failed - emit error
         console.error(`[ScriptExecutor] Failed to get/create session '${sessionName}':`, error.message);
-        const actionResultId = `action-result:${scriptId}`;
         this.addOperation({
           type: 'addFacet',
           facet: createActionResultFacet(
-            actionResultId,
+            `action-result:${scriptId}`,
             scriptId,
             null,
             { success: false, error: `Session error: ${error.message}`, message: 'Failed to create session' },
@@ -368,21 +642,15 @@ export class ScriptExecutorEffector extends Component {
         return;
       }
     } else {
-      // One-off execution: create new sandbox
+      // One-off execution
       sandbox = createLuaSandbox();
-
-      // Install built-in functions (log, json.encode/decode, etc.)
       installBuiltins(sandbox);
 
-      // Register tools from registry
       if (this.toolRegistry) {
         const tools = this.toolRegistry.getTools();
-        console.log(`[ScriptExecutor] Registering ${tools.length} tools:`, tools.map(t => t.name));
         for (const tool of tools) {
           sandbox.registerTool(tool.name, (...args) => args);
         }
-      } else {
-        console.log('[ScriptExecutor] No tool registry available!');
       }
     }
 
@@ -390,38 +658,33 @@ export class ScriptExecutorEffector extends Component {
     try {
       sandbox.loadScript(code);
     } catch (error: any) {
-      // Syntax error - create both result facets immediately
-      const resultId = `script-result:${Date.now()}`;
       this.addOperation({
         type: 'addFacet',
-        facet: createScriptResultFacet(resultId, scriptId, {
+        facet: createScriptResultFacet(`script-result:${Date.now()}`, scriptId, {
           success: false,
           error: error.message,
           errorType: 'lua-error',
         }),
       });
 
-      // Also create action-result facet to trigger re-activation
-      const actionResultId = `action-result:${scriptId}`;
       this.addOperation({
         type: 'addFacet',
         facet: createActionResultFacet(
-          actionResultId,
+          `action-result:${scriptId}`,
           scriptId,
-          null,  // parentActionId
+          null,
           { success: false, error: error.message, message: 'Script syntax error' },
-          streamId,  // Pass streamId for routing
-          streamType,  // Pass streamType for routing
-          alias  // Pass alias for correlation
+          streamId,
+          streamType,
+          alias
         ),
       });
 
-      // Only destroy sandbox if one-off (not session-based)
       if (!isSessionScript) {
         sandbox.destroy();
-      } else if (sessionName && this.sessionManager) {
-        // Unregister script from session since it failed
-        this.sessionManager.unregisterScript(sessionName, scriptId);
+      } else if (sessionName) {
+        const session = this.sessions.get(sessionName);
+        if (session) session.pendingScripts.delete(scriptId);
       }
       return;
     }
@@ -434,19 +697,13 @@ export class ScriptExecutorEffector extends Component {
       status: 'pending',
     });
 
-    // Add the script facet
     this.addOperation({ type: 'addFacet', facet: scriptFacet });
 
-    // Emit script created event
     this.emit({
       topic: 'script:created',
-      payload: {
-        scriptId,
-        parentScriptId: scriptFacet.parentScriptId,
-      },
+      payload: { scriptId, parentScriptId: scriptFacet.parentScriptId },
     });
 
-    // Create running script entry
     const runningScript: RunningScript = {
       scriptId,
       agentId,
@@ -465,7 +722,6 @@ export class ScriptExecutorEffector extends Component {
       isSessionScript,
     };
 
-    // Set up timeout if configured
     if (timeoutMs !== null && timeoutMs > 0) {
       runningScript.timeoutHandle = setTimeout(() => {
         this.handleTimeout(scriptId);
@@ -475,42 +731,70 @@ export class ScriptExecutorEffector extends Component {
     this.runningScripts.set(scriptId, runningScript);
   }
 
-  /**
-   * Start executing a script
-   */
+  private handleToolCallCompletedEvent(event: any, state: ReadonlyVEILState): void {
+    const { toolCallId, parentScriptId, success } = event.payload || {};
+    if (!toolCallId || !parentScriptId) return;
+
+    const script = this.runningScripts.get(parentScriptId);
+    if (!script || script.pendingToolCallId !== toolCallId) return;
+
+    const resultFacet = this.findToolCallResultFacet(toolCallId, state);
+    script.pendingToolCallId = undefined;
+
+    if (resultFacet && resultFacet.success) {
+      script.needsResume = true;
+      script.resumeValue = resultFacet.result;
+    } else if (resultFacet) {
+      script.completed = true;
+      script.result = {
+        success: false,
+        error: resultFacet.error || 'Tool call failed',
+        errorType: 'tool-error',
+      };
+    } else {
+      if (success) {
+        script.needsResume = true;
+        script.resumeValue = undefined;
+      } else {
+        script.completed = true;
+        script.result = {
+          success: false,
+          error: 'Tool call failed (no result facet)',
+          errorType: 'tool-error',
+        };
+      }
+    }
+  }
+
+  private findToolCallResultFacet(toolCallId: string, state: ReadonlyVEILState): ToolCallResultFacet | undefined {
+    if (!state?.facets) return undefined;
+
+    for (const facet of state.facets.values()) {
+      if (isToolCallResultFacet(facet) && facet.toolCallId === toolCallId) {
+        return facet;
+      }
+    }
+    return undefined;
+  }
+
   private startScript(script: RunningScript): void {
-    // Update status to running
     this.addOperation({
       type: 'rewriteFacet',
       id: script.scriptId,
       changes: { status: 'running' },
     });
-
-    // Run the script
     this.runScript(script);
   }
 
-  /**
-   * Resume script execution after tool call
-   */
   private resumeScript(script: RunningScript, resumeValue?: unknown): void {
-    // Update status to running
     this.addOperation({
       type: 'rewriteFacet',
       id: script.scriptId,
-      changes: {
-        status: 'running',
-        blockedOn: undefined,
-      },
+      changes: { status: 'running', blockedOn: undefined },
     });
-
-    // Run the script with resume value
     this.runScript(script, resumeValue);
   }
 
-  /**
-   * Run the script (initial or resumed)
-   */
   private runScript(script: RunningScript, resumeValue?: unknown): void {
     let result: LuaExecutionResult;
     try {
@@ -526,13 +810,9 @@ export class ScriptExecutorEffector extends Component {
     }
 
     if (result.completed) {
-      // Script finished
       script.completed = true;
       if (result.success) {
-        script.result = {
-          success: true,
-          result: result.returnValue,
-        };
+        script.result = { success: true, result: result.returnValue };
       } else {
         script.result = {
           success: false,
@@ -541,11 +821,9 @@ export class ScriptExecutorEffector extends Component {
         };
       }
     } else if (result.success && script.sandbox.isToolCall(result.yieldValue)) {
-      // Script yielded for tool call
       const toolCall = result.yieldValue as { name: string; args: unknown[] };
       this.handleToolCallYield(script, toolCall.name, toolCall.args);
     } else {
-      // Unexpected yield
       script.completed = true;
       script.result = {
         success: false,
@@ -555,44 +833,26 @@ export class ScriptExecutorEffector extends Component {
     }
   }
 
-  /**
-   * Handle script yielding for a tool call
-   */
   private handleToolCallYield(script: RunningScript, toolName: string, args: unknown[]): void {
-    // Create tool call ID
     const toolCallId = `tool-call:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-    // Update script status to blocked
     this.addOperation({
       type: 'rewriteFacet',
       id: script.scriptId,
-      changes: {
-        status: 'blocked',
-        blockedOn: toolCallId,
-      },
+      changes: { status: 'blocked', blockedOn: toolCallId },
     });
 
-    // Create tool call facet
     const toolCallFacet = createToolCallFacet(toolCallId, script.scriptId, toolName, args, 'pending');
     this.addOperation({ type: 'addFacet', facet: toolCallFacet });
 
-    // Store pending tool call ID
     script.pendingToolCallId = toolCallId;
 
-    // Emit tool call event
     this.emit({
       topic: 'tool-call:created',
-      payload: {
-        toolCallId,
-        parentScriptId: script.scriptId,
-        toolName,
-      },
+      payload: { toolCallId, parentScriptId: script.scriptId, toolName },
     });
   }
 
-  /**
-   * Handle script timeout
-   */
   private handleTimeout(scriptId: string): void {
     const script = this.runningScripts.get(scriptId);
     if (!script || script.completed) return;
@@ -605,13 +865,17 @@ export class ScriptExecutorEffector extends Component {
     };
   }
 
-  /**
-   * Finalize a completed script (create result facets)
-   */
   private finalizeScript(script: RunningScript): void {
     if (!script.result) return;
 
-    // Update script status
+    // Remove from session pending scripts
+    if (script.isSessionScript && script.sessionName) {
+      const session = this.sessions.get(script.sessionName);
+      if (session) {
+        session.pendingScripts.delete(script.scriptId);
+      }
+    }
+
     this.addOperation({
       type: 'rewriteFacet',
       id: script.scriptId,
@@ -621,39 +885,66 @@ export class ScriptExecutorEffector extends Component {
       },
     });
 
-    // Create unified action-result facet (triggers agent re-activation)
-    const actionResultId = `action-result:${script.scriptId}`;
     const actionResultFacet = createActionResultFacet(
-      actionResultId,
-      script.scriptId,  // actionId = scriptId for lua scripts
-      null,  // parentActionId
+      `action-result:${script.scriptId}`,
+      script.scriptId,
+      null,
       script.result.success
         ? { success: true, result: (script.result as any).result, message: 'Script completed' }
         : { success: false, error: (script.result as any).error || 'Script failed', message: 'Script failed' },
-      script.streamId,  // Pass streamId so agent response can be routed correctly
-      script.streamType,  // Pass streamType for routing
-      script.alias  // Pass alias for correlation
+      script.streamId,
+      script.streamType,
+      script.alias
     );
     this.addOperation({ type: 'addFacet', facet: actionResultFacet });
 
-    // Also create script-specific result facet (for backwards compatibility)
-    const resultId = `script-result:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const resultFacet = createScriptResultFacet(resultId, script.scriptId, script.result);
+    const resultFacet = createScriptResultFacet(
+      `script-result:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      script.scriptId,
+      script.result
+    );
     this.addOperation({ type: 'addFacet', facet: resultFacet });
   }
 
-  /**
-   * Get currently executing scripts count
-   */
+  // ============================================
+  // UTILITY METHODS
+  // ============================================
+
+  private uint8ArrayToBase64(bytes: Uint8Array): string {
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+  }
+
+  private base64ToUint8Array(base64: string): Uint8Array {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  }
+
+  // ============================================
+  // PUBLIC API
+  // ============================================
+
   getPendingScriptCount(): number {
     return this.runningScripts.size;
   }
 
-  /**
-   * Check if a script is currently executing
-   */
   isScriptPending(scriptId: string): boolean {
     return this.runningScripts.has(scriptId);
+  }
+
+  getSessionCount(): number {
+    return this.sessions.size;
+  }
+
+  hasSession(name: string): boolean {
+    return this.sessions.has(name);
   }
 }
 

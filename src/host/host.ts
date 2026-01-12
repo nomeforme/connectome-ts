@@ -334,7 +334,7 @@ export class ConnectomeHost {
 
     // Reconstruct components from VEIL facets
     console.log('[Host.restore] Reconstructing components from VEIL...');
-    await this.reconstructComponentsFromVEIL(space, veilState);
+    await this.reconstructComponentsFromVEIL(space, veilState, snapshot);
     console.log('[Host.restore] Components reconstructed');
 
     // Exit restoration mode
@@ -539,7 +539,7 @@ export class ConnectomeHost {
   /**
    * Reconstruct components from component-state facets in VEIL
    */
-  private async reconstructComponentsFromVEIL(space: Space, veilState: VEILStateManager): Promise<void> {
+  private async reconstructComponentsFromVEIL(space: Space, veilState: VEILStateManager, snapshot?: any): Promise<void> {
     const { ComponentRegistry } = await import('../persistence/component-registry');
     const state = veilState.getState();
 
@@ -550,6 +550,18 @@ export class ConnectomeHost {
     if (componentFacets.length === 0) {
       console.log('[Host] No component-state facets found in VEIL state');
       return;
+    }
+
+    // Build a map of componentId -> properties from snapshot.space.components
+    // This contains @persistent decorated properties that aren't in facet.state
+    const componentPropertiesMap = new Map<string, any>();
+    if (snapshot?.space?.components) {
+      for (const comp of snapshot.space.components) {
+        if (comp.id && comp.properties) {
+          componentPropertiesMap.set(comp.id, comp.properties);
+        }
+      }
+      console.log(`[Host] Built properties map from ${componentPropertiesMap.size} snapshot components`);
     }
 
     // Infrastructure components that are added by the host/space separately
@@ -565,7 +577,12 @@ export class ConnectomeHost {
 
     for (const facet of componentFacets) {
       const { componentId, componentType } = facet;
-      const config = facet.state || {};
+
+      // Merge facet.state with snapshot component properties
+      // Snapshot properties contain @persistent decorated fields
+      const facetState = facet.state || {};
+      const snapshotProperties = componentPropertiesMap.get(componentId) || {};
+      const config = { ...facetState, ...snapshotProperties };
 
       if (!componentId || !componentType) {
         console.warn(`[Host] Facet missing componentId/componentType: ${facet.id}`);
@@ -587,7 +604,8 @@ export class ConnectomeHost {
 
       // Check for AXON metadata - load dynamically if needed
       const axonMetadata = (config as any)?._axonMetadata;
-      console.log(`[Host]   ${componentType}: config keys=${Object.keys(config).join(',')}, axonMetadata=${!!axonMetadata}`);
+      const snapshotPropKeys = Object.keys(snapshotProperties);
+      console.log(`[Host]   ${componentType}: facet keys=${Object.keys(facetState).join(',') || '(none)'}, snapshot props=${snapshotPropKeys.join(',') || '(none)'}, axonMetadata=${!!axonMetadata}`);
       if (axonMetadata?.moduleUrl && !ComponentRegistry.has(componentType)) {
         console.log(`[Host]   Loading AXON component: ${componentType} from ${axonMetadata.moduleUrl}`);
         try {

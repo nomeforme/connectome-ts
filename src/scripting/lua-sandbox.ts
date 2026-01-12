@@ -16,7 +16,9 @@ const {
   lualib,
   to_luastring,
   to_jsstring,
-} = fengari;
+  saveVM,
+  restoreVM,
+} = fengari as any; // Cast to any for saveVM/restoreVM which are in the fork
 
 // Lua thread status codes
 const LUA_OK = lua.LUA_OK;
@@ -673,6 +675,61 @@ export class LuaSandbox {
    */
   getRegisteredTools(): Set<string> {
     return new Set(this.registeredTools);
+  }
+
+  // ============================================
+  // VM STATE PERSISTENCE (using fengari fork)
+  // ============================================
+
+  /**
+   * Save the entire VM state to a binary buffer.
+   * This captures all globals, metatables, upvalues, etc.
+   *
+   * @returns Uint8Array containing the serialized VM state
+   */
+  saveState(): Uint8Array {
+    if (!this.L) {
+      throw new Error('Cannot save state: Lua state is null');
+    }
+    return saveVM(this.L, {
+      stripDebug: false,
+      onUnserializable: 'warn'
+    });
+  }
+
+  /**
+   * Create a new LuaSandbox from a saved VM state.
+   * The restored sandbox will have all globals and state from when it was saved.
+   *
+   * @param data The serialized VM state from saveState()
+   * @param toolsToRegister Optional list of tool names to re-register after restore
+   * @returns A new LuaSandbox with the restored state
+   */
+  static restoreFromState(data: Uint8Array, toolsToRegister?: string[]): LuaSandbox {
+    // Create a new sandbox instance without initializing a new Lua state
+    const sandbox = Object.create(LuaSandbox.prototype) as LuaSandbox;
+    sandbox.toolFunctions = new Map();
+    sandbox.registeredTools = new Set();
+    sandbox.coroutine = null;
+
+    // Restore the Lua state from the serialized data
+    sandbox.L = restoreVM(data, {});
+
+    // Re-register tools if provided (tools are functions that can't be serialized)
+    if (toolsToRegister) {
+      for (const toolName of toolsToRegister) {
+        sandbox.registerTool(toolName);
+      }
+    }
+
+    return sandbox;
+  }
+
+  /**
+   * Get the raw Lua state (for advanced use cases)
+   */
+  getLuaState(): any {
+    return this.L;
   }
 
   /**
