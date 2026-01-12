@@ -698,6 +698,12 @@ export class LuaSandbox {
   }
 
   /**
+   * Libraries that are safe to open in the sandbox.
+   * Excludes: os, io, debug, package (security risks)
+   */
+  private static readonly SAFE_LIBS = ['_G', 'coroutine', 'table', 'string', 'math', 'utf8'];
+
+  /**
    * Create a new LuaSandbox from a saved VM state.
    * The restored sandbox will have all globals and state from when it was saved.
    *
@@ -712,16 +718,23 @@ export class LuaSandbox {
     sandbox.registeredTools = new Set();
     sandbox.coroutine = null;
 
-    // Restore the Lua state from the serialized data
-    sandbox.L = restoreVM(data, {});
+    // Restore the Lua state from the serialized data.
+    // Use openLibs to re-inject standard library functions (they're JS functions
+    // that can't be serialized). Only inject safe libraries for sandboxing.
+    sandbox.L = restoreVM(data, {
+      openLibs: LuaSandbox.SAFE_LIBS
+    });
 
-    // Re-open standard libraries - they contain JS functions that can't be serialized
-    // by the VM snapshot, so we need to re-inject them after restore
-    sandbox.openSafeLibraries();
+    // Remove dangerous functions from base library (load, dofile, etc.)
     sandbox.removeDangerousFunctions();
+
+    // Setup JS interop
     sandbox.setupInterop();
 
-    // Re-register tools if provided (tools are functions that can't be serialized)
+    // Re-register tools if provided.
+    // Tool functions are pure Lua closures that call coroutine.yield(), so they
+    // survive serialization. However, we need to re-register them to restore
+    // the JS-side metadata (registeredTools set, toolFunctions map).
     if (toolsToRegister) {
       for (const toolName of toolsToRegister) {
         sandbox.registerTool(toolName);
