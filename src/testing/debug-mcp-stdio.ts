@@ -249,6 +249,30 @@ async function processMessage(message: any) {
   try {
     const { id, method, params } = message;
     
+    // Handle notifications (no id field) - these don't expect responses
+    if (id === undefined) {
+      switch (method) {
+        case 'notifications/initialized':
+          // Client is telling us initialization is complete - acknowledge silently
+          if (process.env.MCP_DEBUG) {
+            console.error('[DebugMCP] Client initialized notification received');
+          }
+          break;
+        case 'notifications/cancelled':
+          // Client cancelled a request
+          if (process.env.MCP_DEBUG) {
+            console.error('[DebugMCP] Request cancelled:', params);
+          }
+          break;
+        default:
+          if (process.env.MCP_DEBUG) {
+            console.error('[DebugMCP] Unknown notification:', method);
+          }
+      }
+      return; // Notifications don't need responses
+    }
+    
+    // Handle requests (have id field) - these expect responses
     switch (method) {
       case 'initialize':
         sendResponse(id, {

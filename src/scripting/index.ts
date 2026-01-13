@@ -49,5 +49,19 @@ export {
   importToolDefinitions,
 } from './tool-registry';
 
+// Tool Mode Control
+export {
+  ToolModeResolver,
+  createToolModeResolver,
+  resolveToolMode,
+  ToolModeResolution,
+} from './tool-mode-resolver';
+
+export {
+  ToolModeHandler,
+  createToolModeHandler,
+  setToolModeToolDefinition,
+} from './tool-mode-handler';
+
 // Built-in Functions
 export { installBuiltins, getBuiltinNames, BuiltinsOptions } from './builtins';

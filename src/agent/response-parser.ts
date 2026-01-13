@@ -8,7 +8,6 @@
 
 import { Facet, OutgoingVEILOperation } from '../veil/types';
 import { ParsedCompletion, ToolDefinition } from './types';
-import { parseInlineParameters } from './action-parser';
 import { stripTurnMarkers } from '../utils/turn-markers';
 
 export interface ParserConfig {
@@ -61,64 +60,6 @@ export function parseAgentResponse(
   // Track positions of all parsed elements for speech segmentation
   const parsedRanges: Array<{ start: number; end: number }> = [];
 
-  // Protect backticked content from being parsed as actions
-  const backtickPlaceholders: string[] = [];
-  let protectedContent = turnContent.replace(/`([^`]+)`/g, (match, content) => {
-    const placeholder = `__BACKTICK_${backtickPlaceholders.length}__`;
-    backtickPlaceholders.push(match);
-    return placeholder;
-  });
-
-  // Parse {@element.action} syntax - track position
-  const actionRegex = /\{@([\w.:-]+)(?:\s*\(([^)]*)\)|\s*\{([\s\S]*?)\})?\}/g;
-  let actionMatch;
-  while ((actionMatch = actionRegex.exec(protectedContent)) !== null) {
-    const fullPath = actionMatch[1];
-    const inlineParams = actionMatch[2];
-    const blockParams = actionMatch[3];
-    const position = actionMatch.index;
-    const matchEnd = position + actionMatch[0].length;
-
-    parsedRanges.push({ start: position, end: matchEnd });
-
-    const pathParts = fullPath.split('.');
-    let parameters: Record<string, any> = {};
-
-    if (inlineParams) {
-      parameters = parseInlineParameters(inlineParams);
-    } else if (blockParams) {
-      parameters = parseBlockParameters(blockParams);
-    }
-
-    // Restore backticks in parameters
-    restoreBackticksInParams(parameters, backtickPlaceholders);
-
-    const toolName = pathParts.join('.');
-    const element: PositionedElement = {
-      position,
-      operation: {
-        type: 'addFacet',
-        facet: createActionFacet(toolName, parameters, agentId, agentName, defaultStreamId)
-      }
-    };
-
-    // Emit event if tool is registered
-    const tool = tools?.get(toolName);
-    if (tool?.emitEvent) {
-      element.event = {
-        topic: tool.emitEvent.topic,
-        payload: {
-          path: pathParts,
-          action: pathParts[pathParts.length - 1],
-          parameters: Object.keys(parameters).length > 0 ? parameters : {},
-          ...(tool.emitEvent.payloadTemplate || {})
-        }
-      };
-    }
-
-    elements.push(element);
-  }
-
   // Parse thoughts - track position
   const thoughtRegex = /<thought>([\s\S]*?)<\/thought>/g;
   let thoughtMatch;
@@ -135,34 +76,8 @@ export function parseAgentResponse(
     });
   }
 
-  // Parse legacy tool calls - track position
-  const toolRegex = /<tool_call\s+name="([^"]+)">([\s\S]*?)<\/tool_call>/g;
-  let toolMatch;
-  while ((toolMatch = toolRegex.exec(turnContent)) !== null) {
-    const position = toolMatch.index;
-    parsedRanges.push({ start: position, end: position + toolMatch[0].length });
-
-    const toolName = toolMatch[1];
-    const paramContent = toolMatch[2];
-
-    const params: Record<string, any> = {};
-    const paramRegex = /<parameter\s+name="([^"]+)">([^<]*)<\/parameter>/g;
-    let paramMatch;
-    while ((paramMatch = paramRegex.exec(paramContent)) !== null) {
-      params[paramMatch[1]] = parseParameterValue(paramMatch[2]);
-    }
-
-    elements.push({
-      position,
-      operation: {
-        type: 'addFacet',
-        facet: createActionFacet(toolName, params, agentId, agentName, defaultStreamId)
-      }
-    });
-  }
-
-  // Parse <action> tags (new format with multiline content) - track position
-  const actionTagRegex = /<action\s+name="([^"]+)"([^>]*)>([\s\S]*?)<\/action>/g;
+  // Parse <cnctm:action> tags - the primary tool call format
+  const actionTagRegex = /<cnctm:action\s+name="([^"]+)"([^>]*)>([\s\S]*?)<\/cnctm:action>/g;
   let actionTagMatch;
   while ((actionTagMatch = actionTagRegex.exec(turnContent)) !== null) {
     const position = actionTagMatch.index;
@@ -224,6 +139,58 @@ export function parseAgentResponse(
     elements.push(element);
   }
 
+  // Parse <cnctm:function_calls> with <cnctm:invoke> tags (Anthropic-style format)
+  const cnctmFunctionCallsRegex = /<cnctm:function_calls>([\s\S]*?)<\/cnctm:function_calls>/g;
+  let fnCallsMatch;
+  while ((fnCallsMatch = cnctmFunctionCallsRegex.exec(turnContent)) !== null) {
+    const blockPosition = fnCallsMatch.index;
+    const blockEnd = blockPosition + fnCallsMatch[0].length;
+    parsedRanges.push({ start: blockPosition, end: blockEnd });
+
+    const invokeContent = fnCallsMatch[1];
+    
+    // Parse individual <cnctm:invoke> tags within the block
+    const invokeRegex = /<cnctm:invoke\s+name="([^"]+)">([\s\S]*?)<\/cnctm:invoke>/g;
+    let invokeMatch;
+    let invokeIndex = 0;
+    while ((invokeMatch = invokeRegex.exec(invokeContent)) !== null) {
+      const toolName = invokeMatch[1];
+      const paramContent = invokeMatch[2];
+
+      // Parse <cnctm:parameter> tags
+      const params: Record<string, any> = {};
+      const paramRegex = /<cnctm:parameter\s+name="([^"]+)">([\s\S]*?)<\/cnctm:parameter>/g;
+      let paramMatch;
+      while ((paramMatch = paramRegex.exec(paramContent)) !== null) {
+        params[paramMatch[1]] = parseParameterValue(paramMatch[2].trim());
+      }
+
+      const element: PositionedElement = {
+        position: blockPosition + invokeIndex,  // Maintain order within block
+        operation: {
+          type: 'addFacet',
+          facet: createActionFacet(toolName, params, agentId, agentName, defaultStreamId)
+        }
+      };
+
+      // Emit event if tool is registered
+      const tool = tools?.get(toolName);
+      if (tool?.emitEvent) {
+        element.event = {
+          topic: tool.emitEvent.topic,
+          payload: {
+            action: toolName,
+            parameters: params,
+            ...(tool.emitEvent.payloadTemplate || {})
+          }
+        };
+      }
+
+      elements.push(element);
+      invokeIndex++;
+    }
+  }
+
   // Extract speech segments between parsed elements
   // Sort ranges by start position
   parsedRanges.sort((a, b) => a.start - b.start);
@@ -279,46 +246,6 @@ export function parseAgentResponse(
 }
 
 // Helper functions
-
-function parseBlockParameters(blockParams: string): Record<string, any> {
-  const parameters: Record<string, any> = {};
-  const lines = blockParams.trim().split('\n');
-  let currentKey: string | null = null;
-  let currentValue: string[] = [];
-
-  for (const line of lines) {
-    const keyMatch = line.match(/^\s*(\w+):\s*(.*)/);
-    if (keyMatch) {
-      if (currentKey) {
-        parameters[currentKey] = currentValue.join('\n').trim();
-      }
-      currentKey = keyMatch[1];
-      currentValue = [keyMatch[2]];
-    } else if (currentKey && line.trim()) {
-      currentValue.push(line);
-    }
-  }
-  if (currentKey) {
-    parameters[currentKey] = currentValue.join('\n').trim();
-  }
-
-  return parameters;
-}
-
-function restoreBackticksInParams(
-  parameters: Record<string, any>,
-  placeholders: string[]
-): void {
-  for (const key in parameters) {
-    if (typeof parameters[key] === 'string') {
-      let value = parameters[key];
-      placeholders.forEach((original, index) => {
-        value = value.replace(`__BACKTICK_${index}__`, original.slice(1, -1));
-      });
-      parameters[key] = value;
-    }
-  }
-}
 
 function parseParameterValue(value: string): any {
   try {
