@@ -97,11 +97,9 @@ export class ToolModeHandler extends Component {
     const agentName = facet.agentName;
     const streamId = facet.streamId;
     const streamType = facet.streamType;
-    const alias = actionState.alias;
-
     // Validate parameters
     if (!params.toolName) {
-      this.emitError(facet.id, 'Missing required parameter: toolName', streamId, streamType, alias);
+      this.emitError(facet.id, 'Missing required parameter: toolName', streamId, streamType);
       return;
     }
 
@@ -110,8 +108,7 @@ export class ToolModeHandler extends Component {
         facet.id,
         `Invalid mode: ${params.mode}. Must be 'native' or 'programmatic'`,
         streamId,
-        streamType,
-        alias
+        streamType
       );
       return;
     }
@@ -127,8 +124,7 @@ export class ToolModeHandler extends Component {
           facet.id,
           `Tool '${params.toolName}' does not allow mode override`,
           streamId,
-          streamType,
-          alias
+          streamType
         );
         return;
       }
@@ -173,8 +169,7 @@ export class ToolModeHandler extends Component {
         message: `Tool '${params.toolName}' mode set to '${params.mode}'`,
       },
       streamId,
-      streamType,
-      alias
+      streamType
     );
     this.addOperation({ type: 'addFacet', facet: resultFacet });
 
@@ -197,8 +192,7 @@ export class ToolModeHandler extends Component {
     actionId: string,
     error: string,
     streamId?: string,
-    streamType?: string,
-    alias?: string
+    streamType?: string
   ): void {
     const resultId = `action-result:${actionId}`;
     const resultFacet = createActionResultFacet(
@@ -211,8 +205,7 @@ export class ToolModeHandler extends Component {
         message: 'Failed to set tool mode',
       },
       streamId,
-      streamType,
-      alias
+      streamType
     );
     this.addOperation({ type: 'addFacet', facet: resultFacet });
   }
