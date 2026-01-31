@@ -152,14 +152,21 @@ export class ContextHandler {
       // Add to conversation based on type
       if (facet.type === 'event') {
         const eventState = facet.state || {};
+        const metadata: any = {
+          eventType: eventState.eventType,
+          source: eventState.source
+        };
+
+        // Include attachments for image processing
+        if (eventState.attachments && Array.isArray(eventState.attachments) && eventState.attachments.length > 0) {
+          metadata.attachments = eventState.attachments;
+        }
+
         context.conversation.push({
           role: 'user',
           content: facet.content || eventState.text || '',
           timestamp: timestamp || eventState.timestamp || Date.now(),
-          metadata: {
-            eventType: eventState.eventType,
-            source: eventState.source
-          }
+          metadata
         });
       } else if (facet.type === 'speech') {
         const speechState = facet.state || {};

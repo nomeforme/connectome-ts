@@ -63,7 +63,8 @@ export class EventHandler {
           authorName: payload.authorName,
           messageId: payload.messageId,
           channelId: payload.channelId,
-          timestamp: payload.timestamp || Date.now()
+          timestamp: payload.timestamp || Date.now(),
+          attachments: payload.attachments  // Preserve attachments for image processing
         }
       };
 
@@ -90,7 +91,8 @@ export class EventHandler {
           groupId: payload.groupId,
           groupName: payload.groupName,
           botPhone: payload.botPhone,
-          timestamp: payload.timestamp || Date.now()
+          timestamp: payload.timestamp || Date.now(),
+          attachments: payload.attachments  // Preserve attachments for image processing
         }
       };
 
