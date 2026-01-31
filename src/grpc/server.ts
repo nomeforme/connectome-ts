@@ -1,0 +1,291 @@
+/**
+ * Connectome gRPC Server Bootstrap
+ * Initializes and manages the gRPC server for the Connectome service
+ */
+
+import { ConnectomeServer, type ConnectomeServerConfig, type ConnectomeServiceHandlers } from '@connectome/grpc';
+import { Space } from '../spaces/space.js';
+import { VEILStateManager } from '../veil/veil-state.js';
+import { EventHandler } from './handlers/event-handler.js';
+import { SubscriptionHandler } from './handlers/subscription-handler.js';
+import { ContextHandler } from './handlers/context-handler.js';
+
+/**
+ * gRPC server configuration with Space integration
+ */
+export interface GrpcServerOptions extends ConnectomeServerConfig {
+  space: Space;
+  veilState: VEILStateManager;
+}
+
+/**
+ * Start time for uptime tracking
+ */
+let serverStartTime: number = 0;
+
+/**
+ * Create and configure the gRPC server with Connectome handlers
+ */
+export function createGrpcServer(options: GrpcServerOptions): ConnectomeServer {
+  const { space, veilState, ...serverConfig } = options;
+
+  const server = new ConnectomeServer(serverConfig);
+
+  // Create handlers
+  const eventHandler = new EventHandler(space);
+  const subscriptionHandler = new SubscriptionHandler(space, veilState);
+  const contextHandler = new ContextHandler(space, veilState);
+
+  // Track registered agents
+  const registeredAgents = new Map<string, {
+    agentId: string;
+    agentName: string;
+    agentType: string;
+    capabilities: string[];
+    sessionToken: string;
+    createdAt: string;
+    lastActiveAt: string;
+  }>();
+
+  // Set up service handlers
+  const handlers: ConnectomeServiceHandlers = {
+    // Health check
+    async health() {
+      const state = veilState.getState();
+      return {
+        healthy: true,
+        currentSequence: state.currentSequence,
+        activeStreams: state.streams.size,
+        activeAgents: state.agents.size,
+        uptimeMs: serverStartTime > 0 ? Date.now() - serverStartTime : 0
+      };
+    },
+
+    // Emit event to Space
+    async emitEvent(event, waitForFrame) {
+      return eventHandler.handleEmitEvent(event, waitForFrame);
+    },
+
+    // Subscribe to facet changes
+    subscribeToFacets(request, callback, onEnd) {
+      return subscriptionHandler.handleSubscribe(request, callback, onEnd);
+    },
+
+    // Register an agent
+    async registerAgent(request) {
+      const { agentId, agentName, agentType, capabilities, metadata } = request;
+
+      // Generate session token
+      const sessionToken = `session-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+      const now = new Date().toISOString();
+
+      // Store agent info
+      registeredAgents.set(agentId, {
+        agentId,
+        agentName,
+        agentType: agentType || 'assistant',
+        capabilities: capabilities || [],
+        sessionToken,
+        createdAt: now,
+        lastActiveAt: now
+      });
+
+      // Emit agent registration event
+      space.emit({
+        topic: 'agent:registered',
+        source: {
+          componentId: 'grpc-server',
+          componentPath: ['grpc', 'server']
+        },
+        payload: {
+          agentId,
+          agentName,
+          agentType,
+          capabilities,
+          metadata
+        },
+        timestamp: Date.now()
+      });
+
+      console.log(`[GrpcServer] Registered agent: ${agentName} (${agentId})`);
+
+      return {
+        agentId,
+        sessionToken,
+        success: true
+      };
+    },
+
+    // Get rendered context for agent
+    async getContext(request) {
+      return contextHandler.handleGetContext(request);
+    },
+
+    // Create a new stream
+    async createStream(request) {
+      const { streamId, streamType, metadata } = request;
+
+      // Emit stream creation event
+      space.emit({
+        topic: 'stream:create',
+        source: {
+          componentId: 'grpc-server',
+          componentPath: ['grpc', 'server']
+        },
+        payload: {
+          streamId,
+          streamType,
+          metadata
+        },
+        timestamp: Date.now()
+      });
+
+      console.log(`[GrpcServer] Created stream: ${streamId} (${streamType})`);
+
+      return {
+        streamId,
+        streamType,
+        success: true
+      };
+    },
+
+    // Get state snapshot
+    async getStateSnapshot(request) {
+      const { sequence, facetTypes, streamIds } = request;
+      const targetSequence = sequence || veilState.getState().currentSequence;
+
+      // Get state at requested sequence
+      const snapshot = veilState.getStateAtSequence(targetSequence);
+      const state = veilState.getState();
+
+      // Filter facets
+      let facets = Array.from(snapshot.facets.values());
+
+      if (facetTypes && facetTypes.length > 0) {
+        facets = facets.filter(f => facetTypes.includes(f.type));
+      }
+
+      if (streamIds && streamIds.length > 0) {
+        facets = facets.filter(f => {
+          const streamId = (f as any).streamId;
+          return !streamId || streamIds.includes(streamId);
+        });
+      }
+
+      // Convert streams and agents
+      const streams = Array.from(state.streams.values()).map(s => ({
+        id: s.id,
+        name: s.name || s.id,
+        metadata: s.metadata || {}
+      }));
+
+      const agents = Array.from(state.agents.values()).map(a => ({
+        id: a.id,
+        name: a.name,
+        type: a.type || 'assistant',
+        capabilities: a.capabilities || [],
+        metadata: a.metadata || {},
+        createdAt: a.createdAt,
+        lastActiveAt: a.lastActiveAt || a.createdAt
+      }));
+
+      return {
+        sequence: targetSequence,
+        timestamp: new Date().toISOString(),
+        facets,
+        streams,
+        agents,
+        currentStream: state.currentStream
+      };
+    },
+
+    // Get frames by sequence range
+    async getFrames(request) {
+      const { fromSequence, toSequence, limit, streamIds } = request;
+      const state = veilState.getState();
+
+      let frames = state.frameHistory.filter(f => {
+        if (fromSequence && f.sequence < fromSequence) return false;
+        if (toSequence && f.sequence > toSequence) return false;
+        return true;
+      });
+
+      // Filter by stream if specified
+      if (streamIds && streamIds.length > 0) {
+        frames = frames.filter(f => {
+          if (!f.activeStream) return true; // Include frames without stream
+          return streamIds.includes(f.activeStream.streamId);
+        });
+      }
+
+      // Apply limit
+      if (limit && limit > 0) {
+        frames = frames.slice(0, limit);
+      }
+
+      return {
+        frames: frames.map(f => ({
+          sequence: f.sequence,
+          timestamp: f.timestamp,
+          uuid: f.uuid,
+          activeStream: f.activeStream,
+          events: f.events,
+          deltas: f.deltas
+        })),
+        currentSequence: state.currentSequence
+      };
+    },
+
+    // Activate an agent for a stream
+    async activateAgent(request) {
+      const { agentId, streamId, reason, priority, metadata } = request;
+
+      // Map priority to Connectome format
+      const priorityMap: Record<string, 'low' | 'normal' | 'high'> = {
+        'ACTIVATION_LOW': 'low',
+        'ACTIVATION_NORMAL': 'normal',
+        'ACTIVATION_HIGH': 'high',
+        'ACTIVATION_CRITICAL': 'high' // Map critical to high
+      };
+
+      // Emit activation event
+      const activationId = `activation-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+
+      space.activateAgent(streamId, {
+        source: agentId,
+        reason: reason || 'gRPC activation',
+        priority: priorityMap[priority] || 'normal',
+        metadata: metadata as Record<string, any>
+      });
+
+      // Update agent's last active time
+      const agent = registeredAgents.get(agentId);
+      if (agent) {
+        agent.lastActiveAt = new Date().toISOString();
+      }
+
+      return {
+        success: true,
+        activationId
+      };
+    }
+  };
+
+  server.setHandlers(handlers);
+
+  // Track start time when server starts
+  server.on('started', () => {
+    serverStartTime = Date.now();
+  });
+
+  return server;
+}
+
+/**
+ * Start the gRPC server
+ */
+export async function startGrpcServer(options: GrpcServerOptions): Promise<ConnectomeServer> {
+  const server = createGrpcServer(options);
+  await server.start();
+  return server;
+}

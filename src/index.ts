@@ -187,6 +187,10 @@ export { reference, external, type RestorableComponent } from './host/decorators
 // Scripting exports
 export * from './scripting';
 
+// gRPC exports
+export { createGrpcServer, startGrpcServer, type GrpcServerOptions } from './grpc';
+export * from './grpc/handlers';
+
 // Helper/Factory exports
 export {
   // ID generation
