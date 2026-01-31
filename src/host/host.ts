@@ -76,6 +76,7 @@ export class ConnectomeHost {
   private providers = new Map<string, LLMProvider>();
   private secrets = new Map<string, string>();
   private transitionManager?: TransitionManager;
+  private persistenceMaintainer?: PersistenceMaintainer;
   private storageAdapter?: any;  // FileStorageAdapter instance
   private debugServer?: DebugServer;
   
@@ -167,16 +168,16 @@ export class ConnectomeHost {
       );
 
       // Mount persistence maintainer (auto-registration handles the rest!)
-      const persistenceMaintainer = new PersistenceMaintainer(veilState, space, {
+      this.persistenceMaintainer = new PersistenceMaintainer(veilState, space, {
         storagePath: this.config.persistence.storageDir || './connectome-state',
         snapshotInterval: this.config.persistence.snapshotInterval || 100
       });
 
       // Mount directly
-      space.addComponent(persistenceMaintainer, 'infrastructure:PersistenceMaintainer');
+      space.addComponent(this.persistenceMaintainer, 'infrastructure:PersistenceMaintainer');
 
       // Store reference for debug server frame deletion
-      (space as any).persistence = persistenceMaintainer;
+      (space as any).persistence = this.persistenceMaintainer;
     }
 
     // Debug server already started in createFresh() if enabled
@@ -204,8 +205,14 @@ export class ConnectomeHost {
   async stop(): Promise<void> {
     // Save final snapshot
     console.log('\n💾 Saving state before shutdown...');
-    if (this.transitionManager) {
+    if (this.persistenceMaintainer) {
+      await this.persistenceMaintainer.createSnapshot();
+      console.log('📸 Shutdown snapshot saved');
+    } else if (this.transitionManager) {
       await this.transitionManager.createSnapshot();
+      console.log('📸 Shutdown snapshot saved');
+    } else {
+      console.log('⚠️ No persistence manager - snapshot not saved');
     }
     
     // Stop debug server

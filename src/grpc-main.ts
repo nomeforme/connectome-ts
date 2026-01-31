@@ -22,6 +22,7 @@ interface GrpcConfig {
   grpcHost: string;
   persistenceEnabled: boolean;
   persistenceDir: string;
+  snapshotInterval: number;
   debugEnabled: boolean;
   debugPort: number;
   reset: boolean;
@@ -36,6 +37,7 @@ function loadConfig(): GrpcConfig {
     grpcHost: process.env.GRPC_HOST || '0.0.0.0',
     persistenceEnabled: process.env.PERSISTENCE_ENABLED !== 'false',
     persistenceDir: process.env.PERSISTENCE_DIR || './connectome-state',
+    snapshotInterval: parseInt(process.env.SNAPSHOT_INTERVAL || '1000'),
     debugEnabled: process.env.DEBUG_ENABLED === 'true',
     debugPort: parseInt(process.env.DEBUG_PORT || '3015'),
     reset: process.argv.includes('--reset')
@@ -133,7 +135,7 @@ async function main(): Promise<void> {
     persistence: {
       enabled: config.persistenceEnabled,
       storageDir: config.persistenceDir,
-      snapshotInterval: 100
+      snapshotInterval: config.snapshotInterval
     },
     debug: {
       enabled: config.debugEnabled,
