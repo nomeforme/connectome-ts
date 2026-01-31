@@ -75,6 +75,33 @@ export class EventHandler {
       console.log(`[EventHandler] Created message facet for ${payload.authorName}: ${(payload.content || '').substring(0, 50)}...`);
     }
 
+    // Handle signal:message events - create message facet
+    if (event.topic === 'signal:message') {
+      const facet: Facet & { streamId?: string; state?: any } = {
+        type: 'event',
+        id: `msg-${eventId}`,
+        content: `<${payload.sender || 'unknown'}> ${payload.content || ''}`,
+        streamId,
+        state: {
+          eventType: 'signal:message',
+          source: 'signal',
+          senderId: payload.senderUuid || payload.senderNumber,
+          senderName: payload.sender,
+          groupId: payload.groupId,
+          groupName: payload.groupName,
+          botPhone: payload.botPhone,
+          timestamp: payload.timestamp || Date.now()
+        }
+      };
+
+      veilState.applyDeltasDirect([{
+        type: 'addFacet',
+        facet
+      }]);
+
+      console.log(`[EventHandler] Created message facet for ${payload.sender}: ${(payload.content || '').substring(0, 50)}...`);
+    }
+
     // Handle agent:speech events - create speech facet
     if (event.topic === 'agent:speech') {
       const facet: Facet & { streamId?: string; agentId?: string; agentName?: string; state?: any } = {
