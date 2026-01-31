@@ -3,7 +3,7 @@
  * Initializes and manages the gRPC server for the Connectome service
  */
 
-import { ConnectomeServer, type ConnectomeServerConfig, type ConnectomeServiceHandlers } from '@connectome/grpc';
+import { ConnectomeServer, type ConnectomeServerConfig, type ConnectomeServiceHandlers } from '@connectome/grpc-common';
 import { Space } from '../spaces/space.js';
 import { VEILStateManager } from '../veil/veil-state.js';
 import { EventHandler } from './handlers/event-handler.js';
