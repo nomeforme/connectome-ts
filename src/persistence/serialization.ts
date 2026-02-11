@@ -225,9 +225,10 @@ export function serializeSpace(space: Space): SerializedSpace {
 
 /**
  * Serialize VEIL state
+ * @param fromSequence When provided, only serialize frames with sequence > fromSequence
  */
-export function serializeVEILState(state: VEILState): SerializedVEILState {
-  console.log(`[Serialization] serializeVEILState - facets: ${state.facets.size}, frames: ${state.frameHistory.length}, sequence: ${state.currentSequence}`);
+export function serializeVEILState(state: VEILState, fromSequence?: number): SerializedVEILState {
+  console.log(`[Serialization] serializeVEILState - facets: ${state.facets.size}, frames: ${state.frameHistory.length}, sequence: ${state.currentSequence}${fromSequence !== undefined ? `, fromSequence: ${fromSequence}` : ''}`);
   
   // Serialize facets (skip deleted ones)
   const facets: Array<[string, any]> = [];
@@ -264,6 +265,11 @@ export function serializeVEILState(state: VEILState): SerializedVEILState {
     // Skip 'delete' entries - the facets are gone from the state
   }
   
+  // Filter frames by fromSequence if provided
+  const framesToSerialize = fromSequence !== undefined
+    ? state.frameHistory.filter(frame => frame.sequence > fromSequence)
+    : state.frameHistory;
+
   const result = {
     facets,
     scopes: Array.from(state.scopes),
@@ -272,10 +278,10 @@ export function serializeVEILState(state: VEILState): SerializedVEILState {
     currentStream: state.currentStream ? serializeValue(state.currentStream) : undefined,
     currentAgent: state.currentAgent,
     currentSequence: state.currentSequence,
-    frameHistory: state.frameHistory.map(frame => serializeValue(frame)),
+    frameHistory: framesToSerialize.map(frame => serializeValue(frame)),
     removals
   };
-  
+
   console.log(`[Serialization] serializeVEILState result - facets: ${result.facets.length}, frames: ${result.frameHistory.length}`);
   
   return result;

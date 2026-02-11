@@ -27,10 +27,13 @@ export interface VEILStateSnapshot {
 export class VEILStateManager {
   private state: VEILState;
   private listeners: Array<(state: VEILState) => void> = [];
-  
+
   // Cache for historical state snapshots (for efficient time-travel queries)
   private historicalStateCache: Map<number, VEILStateSnapshot> = new Map();
   private readonly maxCachedSnapshots = 10;
+
+  // Frame history limit (0 = unlimited for backward compat)
+  private maxFrameHistory: number = 0;
 
   constructor() {
     this.state = {
@@ -45,6 +48,49 @@ export class VEILStateManager {
       removals: new Map(),
       currentStateCache: new Map()
     };
+  }
+
+  /**
+   * Set the maximum number of frames to keep in history.
+   * When exceeded, oldest frames are trimmed.
+   * @param limit Max frames to keep (0 = unlimited)
+   */
+  setMaxFrameHistory(limit: number): void {
+    this.maxFrameHistory = limit;
+    if (limit > 0) {
+      this.trimFrameHistory();
+    }
+  }
+
+  /**
+   * Trim frame history to maxFrameHistory limit.
+   * Removes oldest frames and cleans up historicalStateCache for evicted sequences.
+   */
+  private trimFrameHistory(): void {
+    if (this.maxFrameHistory <= 0) return;
+
+    const excess = this.state.frameHistory.length - this.maxFrameHistory;
+    if (excess <= 0) return;
+
+    // Get the sequences being evicted (oldest frames)
+    const evictedFrames = this.state.frameHistory.slice(0, excess);
+
+    // Trim the frame history
+    this.state.frameHistory = this.state.frameHistory.slice(excess);
+
+    // Clean up historicalStateCache for evicted sequences
+    if (this.historicalStateCache.size > 0) {
+      const minRetainedSequence = this.state.frameHistory.length > 0
+        ? this.state.frameHistory[0].sequence
+        : Infinity;
+      for (const seq of this.historicalStateCache.keys()) {
+        if (seq < minRetainedSequence) {
+          this.historicalStateCache.delete(seq);
+        }
+      }
+    }
+
+    console.log(`[VEILState] Trimmed ${excess} frames (retained ${this.state.frameHistory.length}, limit ${this.maxFrameHistory})`);
   }
 
   /**
@@ -89,7 +135,8 @@ export class VEILStateManager {
     // Update state
     this.state.frameHistory.push(frame);
     this.state.currentSequence = frame.sequence;
-    
+    this.trimFrameHistory();
+
     // Remove ephemeral facets at end of frame (unless skipped)
     if (!skipEphemeralCleanup) {
       const ephemeralFacets: Array<[string, Facet]> = [];
@@ -98,7 +145,7 @@ export class VEILStateManager {
           ephemeralFacets.push([id, facet]);
         }
       }
-      
+
       // Remove ephemeral facets
       for (const [id, facet] of ephemeralFacets) {
         this.state.facets.delete(id);
@@ -112,7 +159,7 @@ export class VEILStateManager {
 
     // Notify listeners
     this.notifyListeners();
-    
+
     return changes;
   }
   
@@ -159,11 +206,12 @@ export class VEILStateManager {
     // Freeze frame to ensure immutability (enables safe reference sharing)
     Object.freeze(frame);
     Object.freeze(frame.deltas);  // Also freeze the deltas array
-    
+
     // Update state
     this.state.frameHistory.push(frame);
     this.state.currentSequence = frame.sequence;
-    
+    this.trimFrameHistory();
+
     // Remove ephemeral facets at end of frame (unless skipped)
     if (!skipEphemeralCleanup) {
       const ephemeralFacets: Array<[string, Facet]> = [];
@@ -172,13 +220,13 @@ export class VEILStateManager {
           ephemeralFacets.push([id, facet]);
         }
       }
-      
+
       // Remove ephemeral facets
       for (const [id, facet] of ephemeralFacets) {
         this.state.facets.delete(id);
       }
     }
-    
+
     // Notify listeners
     this.notifyListeners();
   }
@@ -585,6 +633,21 @@ export class VEILStateManager {
     }
     
     return snapshot;
+  }
+
+  /**
+   * Get frame history as a direct readonly reference (zero-copy).
+   * Frames are Object.freeze()'d, so safe to share without copying.
+   */
+  getFrameHistory(): readonly Frame[] {
+    return this.state.frameHistory;
+  }
+
+  /**
+   * Get facets map as a direct readonly reference (zero-copy).
+   */
+  getFacets(): ReadonlyMap<string, Facet> {
+    return this.state.facets;
   }
 
   /**

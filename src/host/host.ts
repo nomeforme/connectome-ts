@@ -22,6 +22,7 @@ export interface HostConfig {
     enabled: boolean;
     storageDir?: string;
     snapshotInterval?: number;  // Frames between snapshots (default: 100)
+    maxFrameHistory?: number;   // Max frames kept in memory (default: 2000)
   };
   debug?: {
     enabled: boolean;
@@ -167,10 +168,15 @@ export class ConnectomeHost {
         this.config.persistence.storageDir || './connectome-state'
       );
 
+      // Apply frame history limit
+      const maxFrameHistory = this.config.persistence.maxFrameHistory ?? 2000;
+      veilState.setMaxFrameHistory(maxFrameHistory);
+
       // Mount persistence maintainer (auto-registration handles the rest!)
       this.persistenceMaintainer = new PersistenceMaintainer(veilState, space, {
         storagePath: this.config.persistence.storageDir || './connectome-state',
-        snapshotInterval: this.config.persistence.snapshotInterval || 100
+        snapshotInterval: this.config.persistence.snapshotInterval || 100,
+        maxFrameHistory
       });
 
       // Mount directly
@@ -337,6 +343,12 @@ export class ConnectomeHost {
         const finalSequence = veilState.getState().currentSequence;
         console.log(`✅ Replayed deltas, now at sequence ${finalSequence}`);
       }
+    }
+
+    // Apply frame history limit after restore + delta replay to trim excess frames
+    if (this.config.persistence?.enabled) {
+      const maxFrameHistory = this.config.persistence.maxFrameHistory ?? 2000;
+      veilState.setMaxFrameHistory(maxFrameHistory);
     }
 
     // Reconstruct components from VEIL facets

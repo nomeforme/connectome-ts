@@ -18,6 +18,7 @@ export interface PersistenceMaintainerConfig {
   storagePath: string;
   snapshotInterval?: number; // Default: every 100 frames
   maxDeltasPerFile?: number; // Default: 1000
+  maxFrameHistory?: number;  // Max frames kept in memory (default: 2000)
 }
 
 export class PersistenceMaintainer extends Component {
@@ -103,23 +104,43 @@ export class PersistenceMaintainer extends Component {
     const snapshotSequence = sequence !== undefined ? sequence : state.currentSequence;
     const serializedSpace = serializeSpace(this.rootSpace);
 
+    // Determine fragment boundaries:
+    // Only include frames since lastSnapshotSequence (fragment snapshot).
+    // First snapshot after startup (lastSnapshotSequence === 0) includes all in-memory frames.
+    const fromSequence = this.lastSnapshotSequence > 0 ? this.lastSnapshotSequence : undefined;
+
+    const serializedVEILState = serializeVEILState(state, fromSequence);
+
+    // Determine fragment range from the serialized frames
+    const frameCount = serializedVEILState.frameHistory?.length || 0;
+    let fragmentStartSequence: number | undefined;
+    let fragmentEndSequence: number | undefined;
+    if (fromSequence !== undefined && frameCount > 0) {
+      fragmentStartSequence = fromSequence + 1;
+      fragmentEndSequence = snapshotSequence;
+    }
+
     const snapshot: PersistenceSnapshot = {
       version: 1,
       timestamp: new Date().toISOString(),
       sequence: snapshotSequence,
       lifecycleId: this.rootSpace.lifecycleId,
       spaceId: this.rootSpace.id,
-      veilState: serializeVEILState(state),
+      veilState: serializedVEILState,
       space: serializedSpace,
+      ...(fragmentStartSequence !== undefined && { fragmentStartSequence }),
+      ...(fragmentEndSequence !== undefined && { fragmentEndSequence }),
       metadata: {
         facetCount: state.facets.size,
         streamCount: state.streams.size,
-        agentCount: state.agents.size
+        agentCount: state.agents.size,
+        frameCount,
+        isFragment: fromSequence !== undefined
       }
     };
 
     await this.storage.saveSnapshot(snapshot);
     this.lastSnapshotSequence = snapshotSequence;
-    console.log(`[PersistenceMaintainer] Created snapshot at sequence ${snapshotSequence}`);
+    console.log(`[PersistenceMaintainer] Created ${fromSequence !== undefined ? 'fragment' : 'full'} snapshot at sequence ${snapshotSequence} (${frameCount} frames)`);
   }
 }

@@ -55,26 +55,30 @@ export class ContextHandler {
   async handleGetContext(request: ContextRequest): Promise<ContextResult> {
     const { agentId, streamId, maxFrames, maxTokens, facetTypes } = request;
 
-    const state = this.veilState.getState();
+    // Use direct readonly references (zero-copy) instead of getState() which copies everything
+    const frameHistory = this.veilState.getFrameHistory();
+    const allFacets = this.veilState.getFacets();
 
-    // Get relevant frames
-    let frames = [...state.frameHistory];
-
-    // Filter by stream if specified
-    if (streamId) {
-      frames = frames.filter(f => {
-        if (!f.activeStream) return true; // Include system frames
-        return f.activeStream.streamId === streamId;
-      });
-    }
-
-    // Limit frames
-    if (maxFrames > 0) {
-      frames = frames.slice(-maxFrames);
+    // Reverse-iterate to collect up to maxFrames matching frames, with early exit
+    let frames: any[];
+    if (maxFrames > 0 || streamId) {
+      const collected: any[] = [];
+      const limit = maxFrames > 0 ? maxFrames : frameHistory.length;
+      for (let i = frameHistory.length - 1; i >= 0 && collected.length < limit; i--) {
+        const f = frameHistory[i];
+        if (streamId) {
+          if (f.activeStream && f.activeStream.streamId !== streamId) continue;
+        }
+        collected.push(f);
+      }
+      collected.reverse(); // Restore chronological order
+      frames = collected;
+    } else {
+      frames = frameHistory as any[];
     }
 
     // Build context object
-    const context = this.buildContext(frames, agentId, streamId, facetTypes, state.facets);
+    const context = this.buildContext(frames, agentId, streamId, facetTypes, allFacets as Map<string, Facet>);
 
     // Serialize to JSON
     const contextStr = JSON.stringify(context, null, 2);

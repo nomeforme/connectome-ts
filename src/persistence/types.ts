@@ -89,14 +89,19 @@ export interface PersistenceSnapshot {
   sequence: number;
   lifecycleId: string;  // Unique ID for this Space's lifecycle
   spaceId: string;      // Stable Space ID (persists across restores)
-  
+
   // Core state
   veilState: SerializedVEILState;
   space: SerializedSpace; // Replaces elementTree
-  
+
   // Optional compressed frame history
   compressedFrames?: CompressedFrameBatch[];
-  
+
+  // Fragment snapshot fields — when present, this snapshot only contains
+  // frames in the range [fragmentStartSequence, fragmentEndSequence]
+  fragmentStartSequence?: number;  // First frame sequence in this snapshot
+  fragmentEndSequence?: number;    // Last frame sequence in this snapshot
+
   // Metadata
   metadata?: Record<string, any>;
 }
