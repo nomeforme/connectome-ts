@@ -81,7 +81,7 @@ export class ContextHandler {
     const context = this.buildContext(frames, agentId, streamId, facetTypes, allFacets as Map<string, Facet>);
 
     // Serialize to JSON
-    const contextStr = JSON.stringify(context, null, 2);
+    const contextStr = JSON.stringify(context);
     const contextJson = new TextEncoder().encode(contextStr);
 
     // Estimate tokens
@@ -96,11 +96,11 @@ export class ContextHandler {
 
     if (maxTokens > 0 && tokenCount > maxTokens) {
       finalContext = this.trimContext(context, maxTokens);
-      const trimmedStr = JSON.stringify(finalContext, null, 2);
+      const trimmedStr = JSON.stringify(finalContext);
       finalTokenCount = estimateTokens(trimmedStr);
     }
 
-    const finalJson = new TextEncoder().encode(JSON.stringify(finalContext, null, 2));
+    const finalJson = new TextEncoder().encode(JSON.stringify(finalContext));
 
     return {
       agentId,
@@ -286,19 +286,19 @@ export class ContextHandler {
     // First, remove internal thoughts
     trimmed.conversation = context.conversation.filter((msg: any) => !msg.internal);
 
-    let tokenCount = estimateTokens(JSON.stringify(trimmed, null, 2));
+    let tokenCount = estimateTokens(JSON.stringify(trimmed));
 
     // If still over, truncate oldest messages
     while (tokenCount > maxTokens && trimmed.conversation.length > 10) {
       // Keep at least 10 recent messages
       trimmed.conversation.shift();
-      tokenCount = estimateTokens(JSON.stringify(trimmed, null, 2));
+      tokenCount = estimateTokens(JSON.stringify(trimmed));
     }
 
     // If still over, truncate state
     if (tokenCount > maxTokens) {
       trimmed.state = {};
-      tokenCount = estimateTokens(JSON.stringify(trimmed, null, 2));
+      tokenCount = estimateTokens(JSON.stringify(trimmed));
     }
 
     // If still over, truncate message content

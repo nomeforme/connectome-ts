@@ -127,7 +127,8 @@ export class ComponentManager extends Component {
     'ComponentManager',
     'PersistenceMaintainer',
     'VEILOperationReceptor',
-    'HostHandlerComponent'
+    'HostHandlerComponent',
+    'ActivationCompletedReceptor',
   ]);
 
   /**
