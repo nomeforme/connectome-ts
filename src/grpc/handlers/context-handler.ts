@@ -12,6 +12,7 @@ import type { Facet, StreamRef } from '../../veil/types.js';
  */
 export interface ContextRequest {
   agentId: string;
+  agentName?: string;
   streamId: string;
   maxFrames: number;
   maxTokens: number;
@@ -53,7 +54,7 @@ export class ContextHandler {
    * Handle a GetContext request
    */
   async handleGetContext(request: ContextRequest): Promise<ContextResult> {
-    const { agentId, streamId, maxFrames, maxTokens, facetTypes } = request;
+    const { agentId, agentName, streamId, maxFrames, maxTokens, facetTypes } = request;
 
     // Use direct readonly references (zero-copy) instead of getState() which copies everything
     const frameHistory = this.veilState.getFrameHistory();
@@ -78,7 +79,7 @@ export class ContextHandler {
     }
 
     // Build context object
-    const context = this.buildContext(frames, agentId, streamId, facetTypes, allFacets as Map<string, Facet>);
+    const context = this.buildContext(frames, agentId, streamId, facetTypes, allFacets as Map<string, Facet>, agentName);
 
     // Serialize to JSON
     const contextStr = JSON.stringify(context);
@@ -120,7 +121,8 @@ export class ContextHandler {
     agentId: string,
     streamId: string,
     facetTypes: string[],
-    allFacets: Map<string, Facet>
+    allFacets: Map<string, Facet>,
+    agentName?: string
   ): any {
     const context: any = {
       agent: {
@@ -175,7 +177,10 @@ export class ContextHandler {
       } else if (facet.type === 'speech') {
         const speechState = facet.state || {};
         const speechAgentId = facet.agentId || facet.agentName;
-        const isOwnSpeech = speechAgentId === agentId;
+        const speechAgentName = facet.agentName || facet.agentId;
+        // Match by ID or name — axons emit agentId=botName but register with a different agentId
+        const isOwnSpeech = speechAgentId === agentId
+          || (agentName != null && speechAgentName === agentName);
 
         // Own speech = assistant role, other agents' speech = user role with speaker prefix
         if (isOwnSpeech) {

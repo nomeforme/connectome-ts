@@ -118,6 +118,11 @@ export function createGrpcServer(options: GrpcServerOptions): ConnectomeServer {
 
     // Get rendered context for agent
     async getContext(request) {
+      // Resolve agent name from registry so context handler can match speech by name
+      const agent = registeredAgents.get(request.agentId);
+      if (agent) {
+        request.agentName = agent.agentName;
+      }
       return contextHandler.handleGetContext(request);
     },
 
