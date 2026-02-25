@@ -7,6 +7,7 @@
 import { Space } from '../../spaces/space.js';
 import type { SpaceEvent } from '../../spaces/types.js';
 import type { Facet } from '../../veil/types.js';
+import { createDefaultTransition } from '../../veil/types.js';
 
 /**
  * Result from emitting an event
@@ -104,7 +105,7 @@ export class EventHandler {
       console.log(`[EventHandler] Created message facet for ${payload.sender}: ${(payload.content || '').substring(0, 50)}...`);
     }
 
-    // Handle agent:speech events - create speech facet
+    // Handle agent:speech events - create speech facet via applyFrame so gRPC subscribers are notified
     if (event.topic === 'agent:speech') {
       const facet: Facet & { streamId?: string; agentId?: string; agentName?: string; state?: any } = {
         type: 'speech',
@@ -118,12 +119,20 @@ export class EventHandler {
         }
       };
 
-      veilState.applyDeltasDirect([{
-        type: 'addFacet',
-        facet
-      }]);
+      const deltas = [{ type: 'addFacet' as const, facet }];
+      const frameSequence = veilState.getNextSequence();
+      const timestamp = new Date().toISOString();
+      veilState.applyFrame({
+        sequence: frameSequence,
+        timestamp,
+        uuid: `speech-${eventId}`,
+        activeStream: streamId ? { streamId, streamType: 'grpc' } : undefined,
+        events: [],
+        deltas,
+        transition: createDefaultTransition(frameSequence, timestamp)
+      }, true); // skipEphemeralCleanup — preserve existing ephemeral facets
 
-      console.log(`[EventHandler] Created speech facet for ${payload.agentName}: ${(payload.content || '').substring(0, 50)}...`);
+      console.log(`[EventHandler] Created speech facet (frame ${frameSequence}) for ${payload.agentName}: ${(payload.content || '').substring(0, 50)}...`);
     }
   }
 

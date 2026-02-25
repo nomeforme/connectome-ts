@@ -23,7 +23,8 @@
 export * from './types';
 
 // Lua Sandbox
-export { LuaSandbox, createLuaSandbox, LuaExecutionResult } from './lua-sandbox';
+export { LuaSandbox, createLuaSandbox } from './lua-sandbox';
+export type { LuaExecutionResult } from './lua-sandbox';
 
 // Script Executor
 export { ScriptExecutorEffector, createScriptExecutor } from './script-executor';
@@ -50,4 +51,5 @@ export {
 } from './tool-registry';
 
 // Built-in Functions
-export { installBuiltins, getBuiltinNames, BuiltinsOptions } from './builtins';
+export { installBuiltins, getBuiltinNames } from './builtins';
+export type { BuiltinsOptions } from './builtins';

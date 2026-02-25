@@ -19,13 +19,15 @@ export { ComponentRegistry } from './component-registry';
 export { restoreFromSnapshot } from './restoration';
 export { TransitionManager } from './transition-manager';
 export { TransitionMaintainer } from './transition-maintainer';
-export {
+export type {
   ElementOperation as TransitionElementOperation,
-  ComponentOperation as TransitionComponentOperation,
   ComponentChange as TransitionComponentChange,
   TransitionNode,
   TransitionSnapshot,
   TransitionApplicator,
   SnapshotProvider,
   FrameTransition as PersistenceFrameTransition
+} from './transition-types';
+export type {
+  ComponentOperation as TransitionComponentOperation
 } from './transition-types';

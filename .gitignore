@@ -25,3 +25,9 @@ test-persistence/
 test-transitions/
 examples/archive/test-restore-final/snapshots/
 examples/archive/test-restore-data/snapshots/
+.gitnexus
+
+# Build artifacts
+*.tsbuildinfo
+.turbo/
+.claude/

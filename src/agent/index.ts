@@ -6,10 +6,13 @@ export { BasicAgent } from './basic-agent';
 export { AgentComponent, AgentEffector } from './agent-component';
 
 // Agent receptors
-export { ActivationCompletedReceptor, ActivationCompletedPayload } from './activation-completed-receptor';
+export { ActivationCompletedReceptor } from './activation-completed-receptor';
+export type { ActivationCompletedPayload } from './activation-completed-receptor';
 
 // Streaming support
-export { ResponseHandler, ActivationStreamPayload } from './response-handler';
+export { ResponseHandler } from './response-handler';
+export type { ActivationStreamPayload } from './response-handler';
 
 // Response parsing
-export { parseAgentResponse, ParserConfig, ParsedResponse } from './response-parser';
+export { parseAgentResponse } from './response-parser';
+export type { ParserConfig, ParsedResponse } from './response-parser';

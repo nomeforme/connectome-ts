@@ -7,6 +7,7 @@ import { createComponentStateFacet } from '../helpers/factories';
 import { join, dirname } from 'path';
 import { writeFileSync, unlinkSync } from 'fs';
 import { tmpdir } from 'os';
+import { createRequire } from 'node:module';
 import { ComponentStateFacet } from '../veil/facet-types';
 import { priorityConstraint } from './constraints';
 
@@ -259,10 +260,11 @@ export class ComponentManager extends Component {
       const moduleCode = await response.text();
 
       // Create module environment similar to AxonLoader
-      const { createAxonEnvironment } = require('../axon/environment');
+      const { createAxonEnvironment } = await import('../axon/environment.js');
       const env = createAxonEnvironment();
 
       // Write module to temp file for proper Node.js module loading
+      const require = createRequire(import.meta.url);
       const Module = require('module');
 
       const tempFile = join(tmpdir(), `connectome-axon-${componentType}-${Date.now()}.js`);
@@ -277,7 +279,7 @@ export class ComponentManager extends Component {
       axonModule.paths = Module._nodeModulePaths(dirname(tempFile));
 
       // Add connectome-ts parent directory to module paths
-      const connectomeParentPath = join(__dirname, '../../..');
+      const connectomeParentPath = join(import.meta.dirname, '../../..');
       axonModule.paths.unshift(connectomeParentPath);
 
       // Load module

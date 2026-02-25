@@ -69,8 +69,8 @@ export function parseInlineParameters(paramString: string): Record<string, any> 
   return params;
 }
 
-// Test cases
-if (require.main === module) {
+// Test cases — run directly with: npx tsx src/agent/action-parser.ts
+if (import.meta.url === `file://${process.argv[1]}`) {
   const testCases = [
     'speed="slowly", careful=true',
     '"gently"',
@@ -79,7 +79,7 @@ if (require.main === module) {
     '42',
     'x=10, y=20.5, enabled=true, name="test"'
   ];
-  
+
   console.log('Testing enhanced parameter parser:\n');
   testCases.forEach(test => {
     console.log(`Input: ${test}`);

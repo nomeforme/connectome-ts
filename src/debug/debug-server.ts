@@ -1012,7 +1012,7 @@ export class DebugServer {
 
   private setupStaticAssets(): void {
     const candidates = [
-      path.resolve(__dirname, '..', '..', 'debug-ui'),
+      path.resolve(import.meta.dirname, '..', '..', 'debug-ui'),
       path.resolve(process.cwd(), 'debug-ui'),
       path.resolve(process.cwd(), 'dist', 'debug-ui')
     ];

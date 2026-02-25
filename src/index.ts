@@ -3,7 +3,8 @@ import './core-components';
 
 // VEIL exports
 export * from './veil/types';
-export { VEILStateManager, VEILStateSnapshot } from './veil/veil-state';
+export { VEILStateManager } from './veil/veil-state';
+export type { VEILStateSnapshot } from './veil/veil-state';
 
 // Memory System exports - temporarily removed during cleanup
 
@@ -33,7 +34,7 @@ export { debugLLMBridge } from './llm/debug-llm-bridge';
 export type { DebugLLMRequest } from './llm/debug-llm-bridge';
 
 // Space/Component exports
-export {
+export type {
   ComponentRef,
   SpaceEvent,
   FrameStartEvent,
@@ -51,14 +52,16 @@ export { Component as SpaceComponent } from './spaces/component';
 export { ComponentManager } from './spaces/component-manager';
 
 // Constraint types and factories
-export {
+export type {
   ComponentConstraintFacet,
   PriorityConstraintFacet,
   BeforeComponentTypeConstraint,
   AfterComponentTypeConstraint,
   BeforeComponentIdConstraint,
   AfterComponentIdConstraint,
-  ConstraintFacet,
+  ConstraintFacet
+} from './spaces/constraints';
+export {
   ComponentPriority,
   priorityConstraint,
   beforeComponentType,
@@ -68,33 +71,33 @@ export {
 } from './spaces/constraints';
 
 // Component ordering strategies
-export {
+export type {
   ComponentOrderingStrategy,
-  PriorityOrderingStrategy,
-  MultiConstraintOrderingStrategy,
   MultiConstraintOrderingOptions,
   MultiConstraintOrderingResult
 } from './spaces/ordering/component-ordering';
+export {
+  PriorityOrderingStrategy,
+  MultiConstraintOrderingStrategy
+} from './spaces/ordering/component-ordering';
 
 // Constraint graph types (for advanced usage)
-export {
+export type {
   ConstraintEdge,
   ConstraintNode,
   ConstraintConflict,
   ConflictType,
-  ConstraintGraphResult,
-  ConstraintGraphBuilder
+  ConstraintGraphResult
 } from './spaces/ordering/constraint-graph';
+export { ConstraintGraphBuilder } from './spaces/ordering/constraint-graph';
 
 // Topological sort types (for advanced usage)
-export {
-  TopologicalSortResult,
-  TopologicalSorter
-} from './spaces/ordering/topological-sort';
+export type { TopologicalSortResult } from './spaces/ordering/topological-sort';
+export { TopologicalSorter } from './spaces/ordering/topological-sort';
 
 // Ordering diagnostics
+export type { OrderingSummary } from './spaces/ordering/ordering-diagnostics';
 export {
-  OrderingSummary,
   OrderingDiagnosticsFormatter,
   validateOrderingResult
 } from './spaces/ordering/ordering-diagnostics';
@@ -155,7 +158,7 @@ export * from './widgets';
 
 // AXON exports
 export { createAxonEnvironment } from './axon/environment';
-export {
+export type {
   IAxonManifest,
   IAxonManifestExtended,
   IAxonModuleExports,

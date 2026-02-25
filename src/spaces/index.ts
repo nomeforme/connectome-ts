@@ -3,7 +3,8 @@ export { Space } from './space';
 export { Component } from './component';
 
 // Effectors
-export { ActionEffector, ActionContext } from './action-effector';
+export { ActionEffector } from './action-effector';
+export type { ActionContext } from './action-effector';
 
 // Types
 export * from './types';

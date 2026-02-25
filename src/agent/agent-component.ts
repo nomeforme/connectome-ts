@@ -10,7 +10,8 @@
 
 import { Component } from '../spaces/component';
 import { SpaceEvent, ExecutionContext } from '../spaces/types';
-import { AgentInterface, AgentCommand, AgentConfig, AgentState } from './types';
+import { AgentInterface, AgentCommand, AgentState } from './types';
+import type { AgentConfig } from './types';
 import {
   Facet,
   AgentLifecycleFacet,
@@ -22,7 +23,7 @@ import {
 } from '../veil/types';
 import { persistable, persistent } from '../persistence/decorators';
 import { reference, RestorableComponent } from '../host/decorators';
-import { LLMProvider } from '../llm/llm-interface';
+import type { LLMProvider } from '../llm/llm-interface';
 import { VEILStateManager } from '../veil/veil-state';
 import { BasicAgent } from './basic-agent';
 import { FacetDelta, ReadonlyVEILState, FacetFilter } from '../spaces/receptor-effector-types';

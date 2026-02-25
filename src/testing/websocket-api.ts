@@ -363,7 +363,6 @@ export class SessionClient extends EventEmitter {
   
   constructor(url: string = 'ws://localhost:3100') {
     super();
-    const WebSocket = require('ws');
     this.ws = new WebSocket(url);
     
     this.connected = new Promise((resolve, reject) => {
@@ -496,9 +495,11 @@ export class SessionClient extends EventEmitter {
 }
 
 // Start server if run directly
-if (require.main === module) {
+// In ESM, detect if this module is the entry point
+const isMain = import.meta.url === `file://${process.argv[1]}`;
+if (isMain) {
   const api = new SessionAPI();
-  
+
   process.on('SIGINT', async () => {
     console.log('\nShutting down...');
     await api.stop();

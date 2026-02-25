@@ -4,10 +4,12 @@
 
 export * from './types';
 export { MemoryTraceStorage } from './memory-trace-storage';
-export { FileTraceStorage, FileTraceStorageConfig } from './file-trace-storage';
+export { FileTraceStorage } from './file-trace-storage';
+export type { FileTraceStorageConfig } from './file-trace-storage';
 
 import { MemoryTraceStorage } from './memory-trace-storage';
-import { FileTraceStorage, FileTraceStorageConfig } from './file-trace-storage';
+import { FileTraceStorage } from './file-trace-storage';
+import type { FileTraceStorageConfig } from './file-trace-storage';
 import { TraceStorage } from './types';
 
 // Global tracer instance

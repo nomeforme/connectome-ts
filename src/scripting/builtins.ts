@@ -6,9 +6,8 @@
  */
 
 import { LuaSandbox } from './lua-sandbox';
+import fengari from 'fengari';
 
-// Import fengari
-const fengari = require('fengari');
 const { lua, lauxlib, to_luastring, to_jsstring } = fengari;
 const LUA_OK = fengari.lua.LUA_OK;
 

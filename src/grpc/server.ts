@@ -9,6 +9,7 @@ import { VEILStateManager } from '../veil/veil-state.js';
 import { EventHandler } from './handlers/event-handler.js';
 import { SubscriptionHandler } from './handlers/subscription-handler.js';
 import { ContextHandler } from './handlers/context-handler.js';
+import { createDefaultTransition } from '../veil/types.js';
 
 /**
  * gRPC server configuration with Space integration
@@ -244,6 +245,7 @@ export function createGrpcServer(options: GrpcServerOptions): ConnectomeServer {
     // Activate an agent for a stream
     async activateAgent(request) {
       const { agentId, streamId, reason, priority, metadata } = request;
+      console.log(`[GrpcServer] activateAgent: agent=${agentId} stream=${streamId} reason=${reason}`);
 
       // Map priority to Connectome format
       const priorityMap: Record<string, 'low' | 'normal' | 'high'> = {
@@ -253,18 +255,77 @@ export function createGrpcServer(options: GrpcServerOptions): ConnectomeServer {
         'ACTIVATION_CRITICAL': 'high' // Map critical to high
       };
 
-      // Emit activation event
+      const mappedPriority = priorityMap[priority] || 'normal';
       const activationId = `activation-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
 
-      space.activateAgent(streamId, {
-        source: agentId,
-        reason: reason || 'gRPC activation',
-        priority: priorityMap[priority] || 'normal',
-        metadata: metadata as Record<string, any>
+      // Build the facet deltas to push into VEIL
+      const deltas: any[] = [];
+
+      // 1. agent-activation facet
+      deltas.push({
+        type: 'addFacet',
+        facet: {
+          id: activationId,
+          type: 'agent-activation',
+          streamId,
+          state: {
+            reason: reason || 'gRPC activation',
+            priority: mappedPriority,
+            sourceAgentId: agentId,
+            metadata: metadata || {}
+          }
+        }
       });
 
-      // Update agent's last active time
+      // 2. rendered-context facet (render context for the agent)
       const agent = registeredAgents.get(agentId);
+      try {
+        const contextResult = await contextHandler.handleGetContext({
+          agentId,
+          agentName: agent?.agentName || '',
+          streamId,
+          maxFrames: 100,
+          maxTokens: 200000,
+          facetTypes: []
+        });
+
+        deltas.push({
+          type: 'addFacet',
+          facet: {
+            id: `ctx-${activationId}`,
+            type: 'rendered-context',
+            streamId,
+            state: {
+              activationId,
+              tokenCount: contextResult.tokenCount,
+              context: contextResult.contextJson.length > 0
+                ? JSON.parse(Buffer.from(contextResult.contextJson).toString('utf8'))
+                : null
+            }
+          }
+        });
+
+        console.log(`[GrpcServer] Activation ${activationId}: ${contextResult.tokenCount} tokens context`);
+      } catch (err: any) {
+        console.error(`[GrpcServer] Failed to render context for activation ${activationId}: ${err.message}`);
+      }
+
+      // Apply as a proper frame so subscribers are notified
+      const frameSequence = veilState.getNextSequence();
+      const timestamp = new Date().toISOString();
+      veilState.applyFrame({
+        sequence: frameSequence,
+        timestamp,
+        uuid: activationId,
+        activeStream: { streamId, streamType: 'grpc' },
+        events: [],
+        deltas,
+        transition: createDefaultTransition(frameSequence, timestamp)
+      }, true); // skipEphemeralCleanup — don't delete existing ephemeral facets
+
+      console.log(`[GrpcServer] Activation frame ${frameSequence} committed for ${agentId} on ${streamId}`);
+
+      // Update agent's last active time
       if (agent) {
         agent.lastActiveAt = new Date().toISOString();
       }

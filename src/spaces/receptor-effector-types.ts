@@ -260,4 +260,4 @@ export interface Maintainer extends Component {
 }
 
 // Re-export common types for convenience
-export { SpaceEvent, Facet, Frame, VEILDelta, ReadonlyVEILState };
+export type { SpaceEvent, Facet, Frame, VEILDelta, ReadonlyVEILState };

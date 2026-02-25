@@ -665,6 +665,8 @@ export class ConnectomeHost {
     const env = createAxonEnvironment();
 
     // Write module to temp file for proper Node.js module loading
+    const { createRequire } = await import('node:module');
+    const require = createRequire(import.meta.url);
     const Module = require('module');
     const { join, dirname } = await import('path');
     const { writeFileSync, unlinkSync } = await import('fs');
@@ -682,7 +684,7 @@ export class ConnectomeHost {
     axonModule.paths = Module._nodeModulePaths(dirname(tempFile));
 
     // Add connectome-ts parent directory to module paths
-    const connectomeParentPath = join(__dirname, '../../..');
+    const connectomeParentPath = join(import.meta.dirname, '../../..');
     axonModule.paths.unshift(connectomeParentPath);
 
     // Load module

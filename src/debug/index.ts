@@ -1,4 +1,5 @@
-export { DebugServer, DebugServerConfig } from './debug-server';
+export { DebugServer } from './debug-server';
+export type { DebugServerConfig } from './debug-server';
 export type { DebugObserver } from './types';
 export {
   registerDebugHost,

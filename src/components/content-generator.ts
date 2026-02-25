@@ -1,5 +1,6 @@
 import { Component } from '../spaces/component';
-import { LLMProvider, LLMMessage } from '../llm/llm-interface';
+import type { LLMProvider } from '../llm/llm-interface';
+import type { LLMMessage } from '../llm/llm-interface';
 import { reference } from '../host/decorators';
 import { persistent } from '../persistence/decorators';
 

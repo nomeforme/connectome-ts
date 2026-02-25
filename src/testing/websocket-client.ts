@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+import WebSocket from 'ws';
 
 interface PendingRequest {
   resolve: (value: any) => void;
@@ -36,8 +37,7 @@ export class RobustSessionClient extends EventEmitter {
     }
     
     this.state = ConnectionState.CONNECTING;
-    const WebSocket = require('ws');
-    
+
     try {
       this.ws = new WebSocket(this.url);
       this.setupEventHandlers();

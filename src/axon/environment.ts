@@ -43,7 +43,8 @@ import {
 let WebSocketImpl: any;
 try {
   // Try to import ws for Node.js environments
-  WebSocketImpl = require('ws');
+  const { default: wsDefault } = await import('ws');
+  WebSocketImpl = wsDefault;
 } catch {
   // Fall back to browser WebSocket if available
   if (typeof WebSocket !== 'undefined') {

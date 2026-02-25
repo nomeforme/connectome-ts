@@ -4,7 +4,8 @@ import type { VEILDelta } from '../veil/types';
 import {
   createAmbientFacet,
   createStateFacet,
-  createEventFacet
+  createEventFacet,
+  createAgentActivation
 } from '../helpers/factories';
 import { ComponentConstraintFacet, ConstraintFacet } from './constraints';
 
@@ -671,7 +672,6 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
     source?: string;
     streamRef?: any;
   }): void {
-    const { createAgentActivation } = require('../helpers/factories');
     this.emitFacet(createAgentActivation(reason, {
       source: options?.source || this.id,
       priority: options?.priority || 'normal',
@@ -686,7 +686,6 @@ export abstract class Component implements ComponentLifecycle, EventHandler {
     eventType?: string;
     metadata?: any;
   }): void {
-    const { createEventFacet } = require('../helpers/factories');
     this.emitFacet(createEventFacet({
       id: `${this.id}-event-${Date.now()}`,
       content,

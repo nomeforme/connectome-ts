@@ -13,6 +13,7 @@ import { VEILStateManager } from './veil/veil-state.js';
 import { AnthropicProvider } from './llm/anthropic-provider.js';
 import { startGrpcServer } from './grpc/server.js';
 import type { ConnectomeApplication } from './host/types.js';
+import { ComponentRegistry } from './persistence/component-registry.js';
 
 /**
  * Configuration from environment variables
@@ -72,7 +73,6 @@ class GrpcServerApplication implements ConnectomeApplication {
 
   getComponentRegistry() {
     // Return minimal registry
-    const { ComponentRegistry } = require('./persistence/component-registry.js');
     return ComponentRegistry;
   }
 

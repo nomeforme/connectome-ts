@@ -4,6 +4,7 @@ import { createAxonEnvironment } from '../axon/environment';
 import { IAxonManifestExtended } from '../axon/interfaces';
 import { persistable, persistent } from '../persistence/decorators';
 import { Space } from '../spaces/space';
+import { createRequire } from 'node:module';
 
 type AxonManifest = IAxonManifestExtended;
 
@@ -104,7 +105,7 @@ export class AxonLoaderComponent extends Component {
   private async restoreLoadedComponentState(): Promise<void> {
     if (!this.loadedComponentState || !this.loadedComponent) return;
     
-    const { deserializeValue } = require('../persistence/serialization');
+    const { deserializeValue } = await import('../persistence/serialization.js');
     
     // Check for AXON-style persistence first
     const componentClass = this.loadedComponent.constructor as any;
@@ -122,7 +123,7 @@ export class AxonLoaderComponent extends Component {
     }
     
     // Fall back to decorator-based restoration
-    const { getPersistenceMetadata } = require('../persistence/decorators');
+    const { getPersistenceMetadata } = await import('../persistence/decorators.js');
     const metadata = getPersistenceMetadata(this.loadedComponent);
     
     if (!metadata) {
@@ -135,9 +136,9 @@ export class AxonLoaderComponent extends Component {
       const propMetadata = metadata.properties.get(key);
       if (propMetadata) {
         if (propMetadata.serializer) {
-          (this.loadedComponent as any)[key] = propMetadata.serializer.deserialize(value);
+          (this.loadedComponent as any)[key] = propMetadata.serializer.deserialize(value as any);
         } else {
-          (this.loadedComponent as any)[key] = deserializeValue(value);
+          (this.loadedComponent as any)[key] = deserializeValue(value as any);
         }
       }
     }
