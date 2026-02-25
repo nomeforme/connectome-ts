@@ -1,5 +1,5 @@
 {
-  "name": "connectome-ts",
+  "name": "@connectome/connectome-ts",
   "version": "0.1.0",
   "description": "Experimental TypeScript implementation of Connectome without DAG",
   "type": "module",
