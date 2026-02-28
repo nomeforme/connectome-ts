@@ -129,7 +129,19 @@ export function createGrpcServer(options: GrpcServerOptions): ConnectomeServer {
 
     // Create a new stream
     async createStream(request) {
-      const { streamId, streamType, metadata } = request;
+      const { streamId, streamType, metadata, parentStreamId } = request;
+
+      // Snapshot current sequence as fork point (before any new frames)
+      const forkSequence = parentStreamId ? veilState.getCurrentSequence() : undefined;
+
+      // Register stream in VEILState (enables hierarchy-aware context)
+      veilState.registerStream({
+        id: streamId,
+        name: metadata?.channelName || streamId,
+        metadata,
+        parentId: parentStreamId || undefined,
+        forkSequence,
+      });
 
       // Emit stream creation event
       space.emit({
@@ -141,12 +153,13 @@ export function createGrpcServer(options: GrpcServerOptions): ConnectomeServer {
         payload: {
           streamId,
           streamType,
-          metadata
+          metadata,
+          parentStreamId: parentStreamId || undefined,
         },
         timestamp: Date.now()
       });
 
-      console.log(`[GrpcServer] Created stream: ${streamId} (${streamType})`);
+      console.log(`[GrpcServer] Created stream: ${streamId} (${streamType})${parentStreamId ? ` parent=${parentStreamId} fork@${forkSequence}` : ' (no parent)'} [raw parentStreamId=${JSON.stringify(parentStreamId)}]`);
 
       return {
         streamId,
@@ -182,7 +195,8 @@ export function createGrpcServer(options: GrpcServerOptions): ConnectomeServer {
       const streams = Array.from(state.streams.values()).map(s => ({
         id: s.id,
         name: s.name || s.id,
-        metadata: s.metadata || {}
+        metadata: s.metadata || {},
+        parentId: s.parentId || '',
       }));
 
       const agents = Array.from(state.agents.values()).map(a => ({

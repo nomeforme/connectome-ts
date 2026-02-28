@@ -60,26 +60,55 @@ export class ContextHandler {
     const frameHistory = this.veilState.getFrameHistory();
     const allFacets = this.veilState.getFacets();
 
+    // Look up stream parentage for hierarchy-aware filtering
+    const parentage = streamId ? this.veilState.getStreamParentage(streamId) : null;
+
+    // Debug: stream hierarchy resolution
+    if (streamId) {
+      const registeredStreams = this.veilState.getStreams();
+      const streamEntry = registeredStreams.get(streamId);
+      console.log(`[ContextHandler] Stream ${streamId}: registered=${!!streamEntry}, parentage=${parentage ? `parentId=${parentage.parentId} fork@${parentage.forkSequence}` : 'none'}, totalRegisteredStreams=${registeredStreams.size}`);
+    }
+
     // Reverse-iterate to collect up to maxFrames matching frames, with early exit
     let frames: any[];
     if (maxFrames > 0 || streamId) {
       const collected: any[] = [];
+      let directCount = 0;
+      let parentCount = 0;
+      let ambientCount = 0;
       const limit = maxFrames > 0 ? maxFrames : frameHistory.length;
       for (let i = frameHistory.length - 1; i >= 0 && collected.length < limit; i--) {
         const f = frameHistory[i];
-        if (streamId) {
-          if (f.activeStream && f.activeStream.streamId !== streamId) continue;
+        if (streamId && f.activeStream) {
+          const fStreamId = f.activeStream.streamId;
+          if (fStreamId === streamId) {
+            directCount++;
+            // Direct match — always include
+          } else if (parentage && fStreamId === parentage.parentId && f.sequence <= parentage.forkSequence) {
+            parentCount++;
+            // Parent stream frame before fork point — include (inherited context)
+          } else {
+            continue; // Skip — different stream and not an inherited parent frame
+          }
+        } else if (!f.activeStream) {
+          ambientCount++;
         }
+        // Frames with no activeStream are ambient — always included
         collected.push(f);
       }
       collected.reverse(); // Restore chronological order
       frames = collected;
+
+      if (parentage) {
+        console.log(`[ContextHandler] Frame collection: direct=${directCount} parent=${parentCount} ambient=${ambientCount} total=${collected.length} (scanned ${Math.min(frameHistory.length, limit + (frameHistory.length - collected.length))} of ${frameHistory.length})`);
+      }
     } else {
       frames = frameHistory as any[];
     }
 
     // Build context object
-    const context = this.buildContext(frames, agentId, streamId, facetTypes, allFacets as Map<string, Facet>, agentName);
+    const context = this.buildContext(frames, agentId, streamId, facetTypes, allFacets as Map<string, Facet>, agentName, parentage);
 
     // Serialize to JSON
     const contextStr = JSON.stringify(context);
@@ -122,7 +151,8 @@ export class ContextHandler {
     streamId: string,
     facetTypes: string[],
     allFacets: Map<string, Facet>,
-    agentName?: string
+    agentName?: string,
+    parentage?: { parentId: string; forkSequence: number } | null
   ): any {
     const context: any = {
       agent: {
@@ -141,7 +171,9 @@ export class ContextHandler {
     const addedFacetIds = new Set<string>();
 
     // Helper to add a facet to conversation
-    const addToConversation = (facet: any, timestamp?: string) => {
+    // fromFilteredFrame: true when called from the frame-delta loop (frames already
+    // hierarchy-filtered), so we skip the stream check — parent facets are intentional.
+    const addToConversation = (facet: any, timestamp?: string, fromFilteredFrame?: boolean) => {
       if (addedFacetIds.has(facet.id)) return;
       addedFacetIds.add(facet.id);
 
@@ -150,9 +182,13 @@ export class ContextHandler {
         return;
       }
 
-      // Filter by stream
-      if (streamId && facet.streamId && facet.streamId !== streamId) {
-        return;
+      // Filter by stream — skip for facets from hierarchy-filtered frames
+      // (parent stream facets are included intentionally via frame-level filtering)
+      if (!fromFilteredFrame && streamId && facet.streamId && facet.streamId !== streamId) {
+        // Allow parent stream facets through (hierarchy inheritance)
+        if (!parentage || facet.streamId !== parentage.parentId) {
+          return;
+        }
       }
 
       // Add to conversation based on type
@@ -235,12 +271,14 @@ export class ContextHandler {
     };
 
     // Extract conversation messages from frames (for facets created via components)
+    // Pass fromFilteredFrame=true because frames are already hierarchy-filtered
+    // (parent frames before fork point are included intentionally)
     for (const frame of frames) {
       for (const delta of frame.deltas || []) {
         if (delta.type !== 'addFacet') continue;
         const facet = delta.facet;
         if (!facet) continue;
-        addToConversation(facet, frame.timestamp);
+        addToConversation(facet, frame.timestamp, true);
       }
     }
 

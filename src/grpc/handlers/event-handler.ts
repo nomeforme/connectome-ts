@@ -50,7 +50,8 @@ export class EventHandler {
     const payload = (event.payload || {}) as Record<string, any>;
     const streamId = payload.streamId || event.metadata?._streamId;
 
-    // Handle discord:message events - create message facet
+    // Handle discord:message events - create message facet via applyFrame so
+    // the facet is recorded in frame deltas with activeStream set (enables stream hierarchy)
     if (event.topic === 'discord:message') {
       const facet: Facet & { streamId?: string; state?: any } = {
         type: 'event',
@@ -69,15 +70,23 @@ export class EventHandler {
         }
       };
 
-      veilState.applyDeltasDirect([{
-        type: 'addFacet',
-        facet
-      }]);
+      const deltas = [{ type: 'addFacet' as const, facet }];
+      const frameSequence = veilState.getNextSequence();
+      const timestamp = new Date().toISOString();
+      veilState.applyFrame({
+        sequence: frameSequence,
+        timestamp,
+        uuid: `msg-${eventId}`,
+        activeStream: streamId ? { streamId, streamType: 'discord' } : undefined,
+        events: [],
+        deltas,
+        transition: createDefaultTransition(frameSequence, timestamp)
+      }, true); // skipEphemeralCleanup — preserve existing ephemeral facets
 
-      console.log(`[EventHandler] Created message facet for ${payload.authorName}: ${(payload.content || '').substring(0, 50)}...`);
+      console.log(`[EventHandler] Created message facet (frame ${frameSequence}) for ${payload.authorName}: ${(payload.content || '').substring(0, 50)}...`);
     }
 
-    // Handle signal:message events - create message facet
+    // Handle signal:message events - create message facet via applyFrame
     if (event.topic === 'signal:message') {
       const facet: Facet & { streamId?: string; state?: any } = {
         type: 'event',
@@ -97,12 +106,20 @@ export class EventHandler {
         }
       };
 
-      veilState.applyDeltasDirect([{
-        type: 'addFacet',
-        facet
-      }]);
+      const deltas = [{ type: 'addFacet' as const, facet }];
+      const frameSequence = veilState.getNextSequence();
+      const timestamp = new Date().toISOString();
+      veilState.applyFrame({
+        sequence: frameSequence,
+        timestamp,
+        uuid: `msg-${eventId}`,
+        activeStream: streamId ? { streamId, streamType: 'signal' } : undefined,
+        events: [],
+        deltas,
+        transition: createDefaultTransition(frameSequence, timestamp)
+      }, true); // skipEphemeralCleanup — preserve existing ephemeral facets
 
-      console.log(`[EventHandler] Created message facet for ${payload.sender}: ${(payload.content || '').substring(0, 50)}...`);
+      console.log(`[EventHandler] Created message facet (frame ${frameSequence}) for ${payload.sender}: ${(payload.content || '').substring(0, 50)}...`);
     }
 
     // Handle agent:speech events - create speech facet via applyFrame so gRPC subscribers are notified

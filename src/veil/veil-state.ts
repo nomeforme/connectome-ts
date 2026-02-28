@@ -1,8 +1,9 @@
-import { 
-  Facet, 
-  VEILState, 
+import {
+  Facet,
+  VEILState,
   VEILOperation,
   StreamRef,
+  StreamInfo,
   FrameTransition,
   Frame
 } from './types';
@@ -98,6 +99,29 @@ export class VEILStateManager {
    */
   getNextSequence(): number {
     return this.state.currentSequence + 1;
+  }
+
+  /**
+   * Get the current sequence number (last committed frame)
+   */
+  getCurrentSequence(): number {
+    return this.state.currentSequence;
+  }
+
+  /**
+   * Register a stream in VEIL state (called on stream creation)
+   */
+  registerStream(info: StreamInfo): void {
+    this.state.streams.set(info.id, info);
+  }
+
+  /**
+   * Get parentage info for a stream (parent ID and fork sequence)
+   */
+  getStreamParentage(streamId: string): { parentId: string; forkSequence: number } | null {
+    const stream = this.state.streams.get(streamId);
+    if (!stream?.parentId || stream.forkSequence == null) return null;
+    return { parentId: stream.parentId, forkSequence: stream.forkSequence };
   }
 
   /**
