@@ -124,7 +124,7 @@ export class EventHandler {
 
     // Handle agent:speech events - create speech facet via applyFrame so gRPC subscribers are notified
     if (event.topic === 'agent:speech') {
-      const facet: Facet & { streamId?: string; agentId?: string; agentName?: string; state?: any } = {
+      const facet: Facet & { streamId?: string; agentId?: string; agentName?: string; state?: any; attachments?: any[] } = {
         type: 'speech',
         id: `speech-${eventId}`,
         content: payload.content || '',
@@ -135,6 +135,11 @@ export class EventHandler {
           timestamp: payload.timestamp || Date.now()
         }
       };
+
+      // Forward attachments if present (inline base64 images/files)
+      if (payload.attachments?.length) {
+        facet.attachments = payload.attachments;
+      }
 
       const deltas = [{ type: 'addFacet' as const, facet }];
       const frameSequence = veilState.getNextSequence();
