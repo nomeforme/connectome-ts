@@ -7,6 +7,9 @@
 import { config as loadEnv } from 'dotenv';
 loadEnv();
 
+import { initErrorTracking, Sentry } from '@connectome/grpc-common';
+initErrorTracking({ serviceName: 'connectome' });
+
 import { ConnectomeHost } from './host/host.js';
 import { Space } from './spaces/space.js';
 import { VEILStateManager } from './veil/veil-state.js';
@@ -166,6 +169,9 @@ async function main(): Promise<void> {
       // Stop host (saves persistence)
       console.log('  Saving state and stopping host...');
       await host.stop();
+
+      // Flush pending error tracking events
+      await Sentry.flush(2000);
 
       console.log('✓ Shutdown complete');
       process.exit(0);
