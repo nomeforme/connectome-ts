@@ -827,7 +827,7 @@ export class VEILStateManager {
 
   private notifyListeners(): void {
     const state = this.getState();
-    for (const listener of this.listeners) {
+    for (const listener of [...this.listeners]) {
       listener(state);
     }
   }

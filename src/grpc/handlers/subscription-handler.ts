@@ -62,6 +62,13 @@ export class SubscriptionHandler {
   ): () => void {
     const { clientId, filters, includeExisting, fromSequence, streamIds } = request;
 
+    // Dedup: unsubscribe old listener before adding new one
+    const existing = this.subscriptions.get(clientId);
+    if (existing) {
+      console.log(`[SubscriptionHandler] Replacing existing subscription for ${clientId}`);
+      existing.unsubscribe();
+    }
+
     console.log(`[SubscriptionHandler] New subscription from ${clientId}`);
 
     // Send existing facets if requested
@@ -112,8 +119,14 @@ export class SubscriptionHandler {
       unsubscribe
     });
 
-    // Return unsubscribe function
+    // Return unsubscribe function (guarded against stale double-calls)
     return () => {
+      const current = this.subscriptions.get(clientId);
+      if (!current || current.unsubscribe !== unsubscribe) {
+        // Already replaced by a newer subscription — just remove the VEIL listener
+        unsubscribe();
+        return;
+      }
       console.log(`[SubscriptionHandler] Unsubscribing ${clientId}`);
       unsubscribe();
       this.subscriptions.delete(clientId);
