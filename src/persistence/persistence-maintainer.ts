@@ -80,6 +80,7 @@ export class PersistenceMaintainer extends Component {
       events: [],
       deltas: frame.deltas,
       activeStream: frame.activeStream,
+      renderedSnapshot: frame.renderedSnapshot,
       transition: {
         sequence: frame.transition.sequence,
         timestamp: frame.transition.timestamp,

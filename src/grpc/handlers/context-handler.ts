@@ -17,6 +17,7 @@ export interface ContextRequest {
   maxFrames: number;
   maxTokens: number;
   facetTypes: string[];
+  includeUnfocused?: boolean;
 }
 
 /**
@@ -54,7 +55,7 @@ export class ContextHandler {
    * Handle a GetContext request
    */
   async handleGetContext(request: ContextRequest): Promise<ContextResult> {
-    const { agentId, agentName, streamId, maxFrames, maxTokens, facetTypes } = request;
+    const { agentId, agentName, streamId, maxFrames, maxTokens, facetTypes, includeUnfocused = false } = request;
 
     // Use direct readonly references (zero-copy) instead of getState() which copies everything
     const frameHistory = this.veilState.getFrameHistory();
@@ -71,12 +72,15 @@ export class ContextHandler {
     }
 
     // Reverse-iterate to collect up to maxFrames matching frames, with early exit
+    // Frames are tagged as focused/unfocused for stream-aware rendering
     let frames: any[];
+    const unfocusedFrameIds = new Set<number>(); // sequences of frames from other streams
     if (maxFrames > 0 || streamId) {
       const collected: any[] = [];
       let directCount = 0;
       let parentCount = 0;
       let ambientCount = 0;
+      let unfocusedCount = 0;
       const limit = maxFrames > 0 ? maxFrames : frameHistory.length;
       for (let i = frameHistory.length - 1; i >= 0 && collected.length < limit; i--) {
         const f = frameHistory[i];
@@ -92,8 +96,12 @@ export class ContextHandler {
           } else if (parentage && fStreamId === parentage.parentId && f.sequence <= parentage.forkSequence) {
             parentCount++;
             // Parent stream frame before fork point — include (inherited context)
+          } else if (includeUnfocused) {
+            // Different stream — include as unfocused (peripheral awareness)
+            unfocusedCount++;
+            unfocusedFrameIds.add(f.sequence);
           } else {
-            continue; // Skip — different stream and not an inherited parent frame
+            continue; // Skip — cross-stream rendering disabled
           }
         } else if (!f.activeStream) {
           ambientCount++;
@@ -104,15 +112,13 @@ export class ContextHandler {
       collected.reverse(); // Restore chronological order
       frames = collected;
 
-      if (parentage) {
-        console.log(`[ContextHandler] Frame collection: direct=${directCount} parent=${parentCount} ambient=${ambientCount} total=${collected.length} (scanned ${Math.min(frameHistory.length, limit + (frameHistory.length - collected.length))} of ${frameHistory.length})`);
-      }
+      console.log(`[ContextHandler] Frame collection: direct=${directCount} parent=${parentCount} unfocused=${unfocusedCount} ambient=${ambientCount} total=${collected.length}`);
     } else {
       frames = frameHistory as any[];
     }
 
     // Build context object
-    const context = this.buildContext(frames, agentId, streamId, facetTypes, allFacets as Map<string, Facet>, agentName, parentage);
+    const context = this.buildContext(frames, agentId, streamId, facetTypes, allFacets as Map<string, Facet>, agentName, parentage, unfocusedFrameIds);
 
     // Serialize to JSON
     const contextStr = JSON.stringify(context);
@@ -156,7 +162,8 @@ export class ContextHandler {
     facetTypes: string[],
     allFacets: Map<string, Facet>,
     agentName?: string,
-    parentage?: { parentId: string; forkSequence: number } | null
+    parentage?: { parentId: string; forkSequence: number } | null,
+    unfocusedFrameIds?: Set<number>
   ): any {
     const context: any = {
       agent: {
@@ -282,12 +289,12 @@ export class ContextHandler {
     // 1. Collect addFacet facets into a map (by ID) so rewrite/remove can update them
     // 2. Apply rewriteFacet and removeFacet deltas to keep content current
     //    (e.g. Discord message edits replace "*Thinking*..." with final content)
-    const frameFacets = new Map<string, { facet: any; timestamp: string }>();
+    const frameFacets = new Map<string, { facet: any; timestamp: string; frameSequence: number }>();
 
     for (const frame of frames) {
       for (const delta of frame.deltas || []) {
         if (delta.type === 'addFacet' && delta.facet?.id) {
-          frameFacets.set(delta.facet.id, { facet: { ...delta.facet }, timestamp: frame.timestamp });
+          frameFacets.set(delta.facet.id, { facet: { ...delta.facet }, timestamp: frame.timestamp, frameSequence: frame.sequence });
         } else if (delta.type === 'rewriteFacet' && delta.id && frameFacets.has(delta.id)) {
           // Apply content/state changes to the collected facet
           const entry = frameFacets.get(delta.id)!;
@@ -305,8 +312,24 @@ export class ContextHandler {
       }
     }
 
-    for (const [, { facet, timestamp }] of frameFacets) {
-      addToConversation(facet, timestamp, true);
+    for (const [, { facet, timestamp, frameSequence }] of frameFacets) {
+      // Unfocused frames render as demoted user messages with stream attribution
+      if (unfocusedFrameIds?.has(frameSequence)) {
+        if (addedFacetIds.has(facet.id)) continue;
+        addedFacetIds.add(facet.id);
+
+        const content = this.renderFacetUnfocused(facet);
+        if (content) {
+          context.conversation.push({
+            role: 'user',
+            content,
+            timestamp: timestamp || Date.now(),
+            metadata: { unfocused: true, streamId: facet.streamId }
+          });
+        }
+      } else {
+        addToConversation(facet, timestamp, true);
+      }
     }
 
     // Scan the facets Map for state/ambient/config facets only.
@@ -343,6 +366,30 @@ export class ContextHandler {
     });
 
     return context;
+  }
+
+  /**
+   * Render a facet from an unfocused (different-stream) frame as a demoted summary.
+   * Mirrors upstream's unfocused rendering — wraps content in stream-attributed tags
+   * so agents have peripheral awareness of cross-stream activity.
+   */
+  private renderFacetUnfocused(facet: any): string | null {
+    const streamId = facet.streamId || 'unknown';
+    const facetType = facet.type || 'unknown';
+
+    let content: string | null = null;
+    if (facet.type === 'event') {
+      content = facet.content || facet.state?.text || null;
+    } else if (facet.type === 'speech') {
+      const speaker = facet.agentName || facet.agentId || 'unknown';
+      content = `${speaker}: ${facet.content || ''}`;
+    } else if (facet.type === 'action') {
+      const toolName = facet.state?.toolName || 'unknown';
+      content = `[Action: ${toolName}] ${facet.content || ''}`;
+    }
+
+    if (!content) return null;
+    return `<event stream="${streamId}" type="${facetType}">${content}</event>`;
   }
 
   /**
