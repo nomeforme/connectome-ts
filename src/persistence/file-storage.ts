@@ -24,23 +24,26 @@ export class FileStorageAdapter implements StorageAdapter {
   private snapshotDir: string;
   private deltaDir: string;
   private bucketStore: FrameBucketStore;
-  
+  private maxSnapshots: number;
+
   // Write locks to prevent concurrent writes to the same file
   private writeLocks: Map<string, Promise<void>> = new Map();
-  
-  constructor(basePath: string) {
+
+  constructor(basePath: string, maxSnapshots: number = 5) {
     this.basePath = basePath;
+    this.maxSnapshots = maxSnapshots;
     this.snapshotDir = path.join(basePath, 'snapshots');
     this.deltaDir = path.join(basePath, 'deltas');
-    this.bucketStore = new FrameBucketStore({ 
+    this.bucketStore = new FrameBucketStore({
       storageDir: basePath,
       bucketSize: 100  // 100 frames per bucket
     });
-    
+
     console.log('[FileStorageAdapter] Created with basePath:', this.basePath);
     console.log('[FileStorageAdapter] snapshotDir:', this.snapshotDir);
     console.log('[FileStorageAdapter] deltaDir:', this.deltaDir);
-    
+    console.log('[FileStorageAdapter] maxSnapshots:', this.maxSnapshots);
+
     // Ensure directories exist
     this.ensureDirectories();
   }
@@ -93,8 +96,11 @@ export class FileStorageAdapter implements StorageAdapter {
       
       console.log(`[FileStorageAdapter] Saved snapshot ${filename} (${frameHistory.length} frames in ${snapshot.veilState.frameBucketRefs?.length || 0} buckets)`);
       
-      // Clean up old snapshots
-      await this.cleanupOldSnapshots();
+      // NOTE: Snapshot/delta/bucket cleanup is implemented but disabled.
+      // Snapshots are now bounded (~9MB vs 144MB) so disk growth is manageable.
+      // Old snapshots + deltas + buckets form a perfect archival chain —
+      // enable cleanup only when archival reconstruction is not needed.
+      // await this.cleanupOldSnapshots();
     } catch (error) {
       // Clean up temp file if something went wrong
       try {
@@ -349,10 +355,134 @@ export class FileStorageAdapter implements StorageAdapter {
   }
   
   /**
-   * Clean up old snapshots
+   * Clean up old snapshots, keeping only the most recent maxSnapshots.
+   * Also prunes deltas older than the oldest retained snapshot and
+   * frame buckets not referenced by any retained snapshot.
    */
   private async cleanupOldSnapshots() {
-    // TODO: Implement cleanup based on maxSnapshots config
+    if (this.maxSnapshots <= 0) return;
+
+    try {
+      const files = await readdir(this.snapshotDir);
+      const snapshotFiles = files
+        .filter(f => f.startsWith('snapshot-') && f.endsWith('.json') && !f.endsWith('.tmp'))
+        .sort((a, b) => {
+          // Sort by timestamp (newest first)
+          const aMatch = a.match(/snapshot-\d+-(?:\w+-)?(\d+)\.json/);
+          const bMatch = b.match(/snapshot-\d+-(?:\w+-)?(\d+)\.json/);
+          const aTime = aMatch ? parseInt(aMatch[1]) : 0;
+          const bTime = bMatch ? parseInt(bMatch[1]) : 0;
+          return bTime - aTime; // newest first
+        });
+
+      if (snapshotFiles.length <= this.maxSnapshots) return;
+
+      const toDelete = snapshotFiles.slice(this.maxSnapshots);
+      const retained = snapshotFiles.slice(0, this.maxSnapshots);
+
+      // Find oldest retained snapshot's sequence for delta pruning
+      let oldestRetainedSequence = Infinity;
+      for (const file of retained) {
+        const seqMatch = file.match(/snapshot-(\d+)-/);
+        if (seqMatch) {
+          oldestRetainedSequence = Math.min(oldestRetainedSequence, parseInt(seqMatch[1]));
+        }
+      }
+
+      // Delete old snapshot files
+      for (const file of toDelete) {
+        await unlink(path.join(this.snapshotDir, file));
+      }
+      console.log(`[FileStorageAdapter] Cleaned up ${toDelete.length} old snapshots (retained ${retained.length})`);
+
+      // Prune deltas older than the oldest retained snapshot
+      if (oldestRetainedSequence < Infinity) {
+        await this.pruneOldDeltas(oldestRetainedSequence);
+      }
+
+      // Prune orphaned frame buckets
+      await this.pruneOrphanedBuckets(retained);
+    } catch (error) {
+      console.error('[FileStorageAdapter] Error cleaning up old snapshots:', error);
+    }
+  }
+
+  /**
+   * Delete delta files with sequence < minSequence (unreplayable without their base snapshot).
+   */
+  private async pruneOldDeltas(minSequence: number): Promise<void> {
+    try {
+      const files = await readdir(this.deltaDir);
+      let pruned = 0;
+      for (const file of files) {
+        const match = file.match(/delta-(\d+)\.json/);
+        if (!match) continue;
+        const seq = parseInt(match[1]);
+        if (seq < minSequence) {
+          await unlink(path.join(this.deltaDir, file));
+          pruned++;
+        }
+      }
+      if (pruned > 0) {
+        console.log(`[FileStorageAdapter] Pruned ${pruned} deltas older than sequence ${minSequence}`);
+      }
+    } catch (error) {
+      console.error('[FileStorageAdapter] Error pruning old deltas:', error);
+    }
+  }
+
+  /**
+   * Delete frame bucket files not referenced by any of the retained snapshots.
+   */
+  private async pruneOrphanedBuckets(retainedSnapshotFiles: string[]): Promise<void> {
+    try {
+      // Collect all bucket hashes referenced by retained snapshots
+      const referencedHashes = new Set<string>();
+      for (const file of retainedSnapshotFiles) {
+        const filepath = path.join(this.snapshotDir, file);
+        const data = await readFile(filepath, 'utf-8');
+        const snapshot = JSON.parse(data);
+        const refs = snapshot.veilState?.frameBucketRefs || [];
+        for (const ref of refs) {
+          if (ref.hash) referencedHashes.add(ref.hash);
+        }
+      }
+
+      if (referencedHashes.size === 0) return;
+
+      // Walk frame-buckets directory and delete unreferenced ones
+      const bucketsDir = path.join(this.basePath, 'frame-buckets');
+      let pruned = 0;
+      try {
+        const dirs = await readdir(bucketsDir);
+        for (const dir of dirs) {
+          const dirPath = path.join(bucketsDir, dir);
+          // Skip non-directories (2-char hash prefix dirs)
+          try {
+            const stat = await promisify(fs.stat)(dirPath);
+            if (!stat.isDirectory()) continue;
+          } catch { continue; }
+
+          const bucketFiles = await readdir(dirPath);
+          for (const bucketFile of bucketFiles) {
+            // Reconstruct full hash: dir prefix + filename without .json
+            const hash = dir + bucketFile.replace('.json', '');
+            if (!referencedHashes.has(hash)) {
+              await unlink(path.join(dirPath, bucketFile));
+              pruned++;
+            }
+          }
+        }
+      } catch {
+        // frame-buckets dir might not exist
+      }
+
+      if (pruned > 0) {
+        console.log(`[FileStorageAdapter] Pruned ${pruned} orphaned frame buckets`);
+      }
+    } catch (error) {
+      console.error('[FileStorageAdapter] Error pruning orphaned buckets:', error);
+    }
   }
   
   /**

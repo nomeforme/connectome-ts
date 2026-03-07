@@ -282,13 +282,11 @@ export class ContextHandler {
       }
     }
 
-    // Also scan the facets Map directly (for facets created via gRPC EventHandler)
+    // Scan the facets Map for state/ambient/config facets only.
+    // Conversation facets (event, speech, thought, action) are already extracted
+    // from frame deltas above — scanning them here would re-add orphaned facets
+    // from trimmed frames and cause unbounded context growth.
     for (const [id, facet] of allFacets) {
-      // Add conversation facets (event, speech, thought, action)
-      if (['event', 'speech', 'thought', 'action'].includes(facet.type)) {
-        addToConversation(facet);
-      }
-
       // Add state facets to state section
       if (['state', 'ambient', 'config'].includes(facet.type)) {
         // Filter by stream

@@ -63,9 +63,19 @@ export class VEILStateManager {
     }
   }
 
+  /** Facet types that are conversation-bound (cleaned up when their frame is trimmed) */
+  private static readonly CONVERSATION_FACET_TYPES = new Set([
+    'event', 'speech', 'thought', 'action',
+    'tool-call', 'script-execution', 'action-definition',
+    'agent-activation', 'rendered-context',
+  ]);
+
   /**
    * Trim frame history to maxFrameHistory limit.
-   * Removes oldest frames and cleans up historicalStateCache for evicted sequences.
+   * Removes oldest frames and cleans up:
+   * - historicalStateCache for evicted sequences
+   * - conversation facets introduced by evicted frames (event, speech, thought, action, etc.)
+   * State/ambient/config facets persist independently of frame history.
    */
   private trimFrameHistory(): void {
     if (this.maxFrameHistory <= 0) return;
@@ -79,6 +89,46 @@ export class VEILStateManager {
     // Trim the frame history
     this.state.frameHistory = this.state.frameHistory.slice(excess);
 
+    // Collect facet IDs added by evicted frames (candidates for cleanup)
+    const evictedFacetIds = new Set<string>();
+    for (const frame of evictedFrames) {
+      for (const delta of frame.deltas || []) {
+        if (delta.type === 'addFacet' && delta.facet?.id) {
+          evictedFacetIds.add(delta.facet.id);
+        }
+      }
+    }
+
+    // Collect facet IDs that are re-added or referenced by retained frames
+    // (a facet could be added in an evicted frame but rewritten in a retained one)
+    const retainedFacetIds = new Set<string>();
+    for (const frame of this.state.frameHistory) {
+      for (const delta of frame.deltas || []) {
+        if (delta.type === 'addFacet' && delta.facet?.id) {
+          retainedFacetIds.add(delta.facet.id);
+        } else if (delta.type === 'rewriteFacet' && delta.id) {
+          retainedFacetIds.add(delta.id);
+        }
+      }
+    }
+
+    // Delete conversation facets from evicted frames (skip state/ambient/config)
+    let cleanedFacets = 0;
+    for (const facetId of evictedFacetIds) {
+      if (retainedFacetIds.has(facetId)) continue;
+
+      const facet = this.state.facets.get(facetId);
+      if (!facet) continue;
+
+      // Only clean up conversation-bound facets — state/ambient/config persist
+      if (!VEILStateManager.CONVERSATION_FACET_TYPES.has(facet.type)) continue;
+
+      this.state.facets.delete(facetId);
+      this.state.currentStateCache.delete(facetId);
+      this.state.removals.delete(facetId);
+      cleanedFacets++;
+    }
+
     // Clean up historicalStateCache for evicted sequences
     if (this.historicalStateCache.size > 0) {
       const minRetainedSequence = this.state.frameHistory.length > 0
@@ -91,7 +141,44 @@ export class VEILStateManager {
       }
     }
 
-    console.log(`[VEILState] Trimmed ${excess} frames (retained ${this.state.frameHistory.length}, limit ${this.maxFrameHistory})`);
+    console.log(`[VEILState] Trimmed ${excess} frames, cleaned ${cleanedFacets} facets (retained ${this.state.frameHistory.length} frames, ${this.state.facets.size} facets, limit ${this.maxFrameHistory})`);
+  }
+
+  /**
+   * One-time cleanup of orphaned conversation facets after restore.
+   * Removes conversation facets from state.facets that aren't referenced
+   * by any retained frame's deltas. These are leftovers from before
+   * trimFrameHistory() started cleaning up facets.
+   */
+  purgeOrphanedFacets(): void {
+    // Collect all facet IDs referenced by retained frames
+    const referencedIds = new Set<string>();
+    for (const frame of this.state.frameHistory) {
+      for (const delta of frame.deltas || []) {
+        if (delta.type === 'addFacet' && delta.facet?.id) {
+          referencedIds.add(delta.facet.id);
+        } else if (delta.type === 'rewriteFacet' && delta.id) {
+          referencedIds.add(delta.id);
+        } else if (delta.type === 'removeFacet' && delta.id) {
+          referencedIds.add(delta.id);
+        }
+      }
+    }
+
+    let purged = 0;
+    for (const [id, facet] of this.state.facets) {
+      if (referencedIds.has(id)) continue;
+      if (!VEILStateManager.CONVERSATION_FACET_TYPES.has(facet.type)) continue;
+
+      this.state.facets.delete(id);
+      this.state.currentStateCache.delete(id);
+      this.state.removals.delete(id);
+      purged++;
+    }
+
+    if (purged > 0) {
+      console.log(`[VEILState] Purged ${purged} orphaned conversation facets (${this.state.facets.size} remaining)`);
+    }
   }
 
   /**

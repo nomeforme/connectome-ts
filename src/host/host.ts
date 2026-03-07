@@ -349,6 +349,8 @@ export class ConnectomeHost {
     if (this.config.persistence?.enabled) {
       const maxFrameHistory = this.config.persistence.maxFrameHistory ?? 2000;
       veilState.setMaxFrameHistory(maxFrameHistory);
+      // Clean up orphaned conversation facets from before facet-cleanup-on-trim existed
+      veilState.purgeOrphanedFacets();
     }
 
     // Reconstruct components from VEIL facets
