@@ -80,6 +80,10 @@ export class ContextHandler {
       const limit = maxFrames > 0 ? maxFrames : frameHistory.length;
       for (let i = frameHistory.length - 1; i >= 0 && collected.length < limit; i--) {
         const f = frameHistory[i];
+
+        // Skip frames with no deltas — they have no content to contribute
+        if (!f.deltas || f.deltas.length === 0) continue;
+
         if (streamId && f.activeStream) {
           const fStreamId = f.activeStream.streamId;
           if (fStreamId === streamId) {

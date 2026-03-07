@@ -11,6 +11,7 @@ import {
   FrameDelta,
   FrameBucketRef
 } from './types';
+import type { Frame } from '../veil/types';
 import { FrameBucketStore } from './frame-bucket-store';
 
 const readFile = promisify(fs.readFile);
@@ -485,6 +486,79 @@ export class FileStorageAdapter implements StorageAdapter {
     }
   }
   
+  /**
+   * Load frame history from ALL snapshots on disk, not just the latest.
+   * Collects bucket refs across all snapshots, deduplicates, and loads
+   * up to maxFrames (keeping the newest).
+   */
+  async loadFullFrameHistory(maxFrames: number): Promise<Frame[]> {
+    const allRefs = new Map<string, FrameBucketRef>();
+
+    try {
+      const files = await readdir(this.snapshotDir);
+      const snapshotFiles = files.filter(f =>
+        f.startsWith('snapshot-') && f.endsWith('.json') && !f.endsWith('.tmp')
+      );
+
+      for (const file of snapshotFiles) {
+        try {
+          const filepath = path.join(this.snapshotDir, file);
+          const data = await readFile(filepath, 'utf-8');
+          const snapshot = JSON.parse(data);
+          const refs: FrameBucketRef[] = snapshot.veilState?.frameBucketRefs || [];
+          for (const ref of refs) {
+            if (ref.hash && !allRefs.has(ref.hash)) {
+              allRefs.set(ref.hash, ref);
+            }
+          }
+        } catch {
+          // Skip unreadable snapshots
+        }
+      }
+    } catch {
+      return [];
+    }
+
+    if (allRefs.size === 0) return [];
+
+    // Sort refs by startSequence ascending
+    const sortedRefs = Array.from(allRefs.values())
+      .sort((a, b) => a.startSequence - b.startSequence);
+
+    // Select refs to load (keep newest up to maxFrames)
+    const totalAvailable = sortedRefs.reduce((sum, ref) => sum + ref.frameCount, 0);
+    let refsToLoad: FrameBucketRef[];
+    if (totalAvailable <= maxFrames) {
+      refsToLoad = sortedRefs;
+    } else {
+      refsToLoad = [];
+      let accumulated = 0;
+      for (let i = sortedRefs.length - 1; i >= 0; i--) {
+        refsToLoad.unshift(sortedRefs[i]);
+        accumulated += sortedRefs[i].frameCount;
+        if (accumulated >= maxFrames) break;
+      }
+    }
+
+    console.log(`[FileStorageAdapter] Loading full frame history: ${refsToLoad.length} buckets from ${allRefs.size} unique across all snapshots`);
+
+    const frames = await this.bucketStore.loadFrames(refsToLoad);
+
+    // Deduplicate by sequence (overlapping bucket boundaries can cause duplicates)
+    const frameMap = new Map<number, Frame>();
+    for (const frame of frames) {
+      frameMap.set(frame.sequence, frame);
+    }
+    const deduped = Array.from(frameMap.values())
+      .sort((a, b) => a.sequence - b.sequence);
+
+    if (deduped.length > maxFrames) {
+      return deduped.slice(deduped.length - maxFrames);
+    }
+
+    return deduped;
+  }
+
   /**
    * Compress a delta
    */

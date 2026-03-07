@@ -291,6 +291,38 @@ export class ConnectomeHost {
     // Enter restoration mode BEFORE any component initialization
     space.setRestorationMode(true);
 
+    // Extend frame history from older snapshots before restoration
+    if (this.config.persistence?.enabled && this.storageAdapter) {
+      const maxFrameHistory = this.config.persistence.maxFrameHistory ?? 2000;
+      const currentFrameCount = snapshot.veilState?.frameHistory?.length || 0;
+      if (currentFrameCount < maxFrameHistory) {
+        console.log(`[Host.restore] Snapshot has ${currentFrameCount} frames, loading full history from all snapshots...`);
+        const fullHistory = await this.storageAdapter.loadFullFrameHistory(maxFrameHistory);
+        if (fullHistory.length > currentFrameCount) {
+          snapshot.veilState.frameHistory = fullHistory;
+          console.log(`[Host.restore] Extended frame history: ${currentFrameCount} → ${fullHistory.length} frames`);
+        }
+      }
+
+      // Reconstruct activeStream for frames that lack it (older persisted data)
+      let reconstructed = 0;
+      for (const frame of snapshot.veilState?.frameHistory || []) {
+        if (!frame.activeStream) {
+          for (const delta of frame.deltas || []) {
+            const streamId = delta.facet?.streamId;
+            if (streamId) {
+              frame.activeStream = { streamId, streamType: 'reconstructed' };
+              reconstructed++;
+              break;
+            }
+          }
+        }
+      }
+      if (reconstructed > 0) {
+        console.log(`[Host.restore] Reconstructed activeStream for ${reconstructed} frames from facet deltas`);
+      }
+    }
+
     // Restore VEIL state from snapshot
     console.log('[Host.restore] Restoring VEIL state...');
     await restoreVEILState(veilState, snapshot.veilState);

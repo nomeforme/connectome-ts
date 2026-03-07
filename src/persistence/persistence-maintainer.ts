@@ -79,6 +79,7 @@ export class PersistenceMaintainer extends Component {
       uuid: frame.uuid,
       events: [],
       deltas: frame.deltas,
+      activeStream: frame.activeStream,
       transition: {
         sequence: frame.transition.sequence,
         timestamp: frame.transition.timestamp,
