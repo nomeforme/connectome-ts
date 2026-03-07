@@ -13,7 +13,6 @@ initErrorTracking({ serviceName: 'connectome' });
 import { ConnectomeHost } from './host/host.js';
 import { Space } from './spaces/space.js';
 import { VEILStateManager } from './veil/veil-state.js';
-import { AnthropicProvider } from './llm/anthropic-provider.js';
 import { startGrpcServer } from './grpc/server.js';
 import type { ConnectomeApplication } from './host/types.js';
 import { ComponentRegistry } from './persistence/component-registry.js';
@@ -119,21 +118,9 @@ async function main(): Promise<void> {
   console.log(`  Reset:         ${config.reset}`);
   console.log();
 
-  // Create LLM provider if API key is available
-  const providers: Record<string, any> = {};
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-
-  if (apiKey) {
-    providers['llm.primary'] = new AnthropicProvider({
-      apiKey,
-      defaultMaxTokens: 4096
-    });
-    console.log('✓ Anthropic LLM provider configured');
-  } else {
-    console.warn('⚠ No ANTHROPIC_API_KEY - LLM features will be unavailable');
-  }
-
   // Create the host
+  // Note: No LLM provider needed — all inference runs in bot-runtime containers.
+  // Connectome server is a pure state + orchestration layer.
   const host = new ConnectomeHost({
     persistence: {
       enabled: config.persistenceEnabled,
@@ -144,7 +131,6 @@ async function main(): Promise<void> {
       enabled: config.debugEnabled,
       port: config.debugPort
     },
-    providers,
     reset: config.reset
   });
 
