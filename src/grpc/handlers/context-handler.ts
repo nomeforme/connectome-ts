@@ -273,13 +273,36 @@ export class ContextHandler {
     // Extract conversation messages from frames (for facets created via components)
     // Pass fromFilteredFrame=true because frames are already hierarchy-filtered
     // (parent frames before fork point are included intentionally)
+    //
+    // Two passes:
+    // 1. Collect addFacet facets into a map (by ID) so rewrite/remove can update them
+    // 2. Apply rewriteFacet and removeFacet deltas to keep content current
+    //    (e.g. Discord message edits replace "*Thinking*..." with final content)
+    const frameFacets = new Map<string, { facet: any; timestamp: string }>();
+
     for (const frame of frames) {
       for (const delta of frame.deltas || []) {
-        if (delta.type !== 'addFacet') continue;
-        const facet = delta.facet;
-        if (!facet) continue;
-        addToConversation(facet, frame.timestamp, true);
+        if (delta.type === 'addFacet' && delta.facet?.id) {
+          frameFacets.set(delta.facet.id, { facet: { ...delta.facet }, timestamp: frame.timestamp });
+        } else if (delta.type === 'rewriteFacet' && delta.id && frameFacets.has(delta.id)) {
+          // Apply content/state changes to the collected facet
+          const entry = frameFacets.get(delta.id)!;
+          if (delta.changes) {
+            if (delta.changes.content !== undefined) {
+              entry.facet.content = delta.changes.content;
+            }
+            if (delta.changes.state) {
+              entry.facet.state = { ...entry.facet.state, ...delta.changes.state };
+            }
+          }
+        } else if (delta.type === 'removeFacet' && delta.id) {
+          frameFacets.delete(delta.id);
+        }
       }
+    }
+
+    for (const [, { facet, timestamp }] of frameFacets) {
+      addToConversation(facet, timestamp, true);
     }
 
     // Scan the facets Map for state/ambient/config facets only.

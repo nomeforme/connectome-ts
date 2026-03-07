@@ -53,9 +53,11 @@ export class EventHandler {
     // Handle discord:message events - create message facet via applyFrame so
     // the facet is recorded in frame deltas with activeStream set (enables stream hierarchy)
     if (event.topic === 'discord:message') {
+      // Use deterministic facet ID based on Discord message ID so updates/deletes can find it
+      const facetId = payload.messageId ? `msg-discord-${payload.messageId}` : `msg-${eventId}`;
       const facet: Facet & { streamId?: string; state?: any } = {
         type: 'event',
-        id: `msg-${eventId}`,
+        id: facetId,
         content: `<${payload.authorName || 'unknown'}> ${payload.content || ''}`,
         streamId,
         state: {
@@ -86,11 +88,72 @@ export class EventHandler {
       console.log(`[EventHandler] Created message facet (frame ${frameSequence}) for ${payload.authorName}: ${(payload.content || '').substring(0, 50)}...`);
     }
 
+    // Handle discord:messageUpdate - rewrite existing event facet with edited content
+    if (event.topic === 'discord:messageUpdate') {
+      const facetId = payload.messageId ? `msg-discord-${payload.messageId}` : null;
+      if (facetId && veilState.getState().facets.has(facetId)) {
+        const deltas = [{
+          type: 'rewriteFacet' as const,
+          id: facetId,
+          changes: {
+            content: `<${payload.authorName || 'unknown'}> ${payload.content || ''}`,
+            state: {
+              editedAt: payload.editedTimestamp || Date.now()
+            }
+          }
+        }];
+        const frameSequence = veilState.getNextSequence();
+        const timestamp = new Date().toISOString();
+        veilState.applyFrame({
+          sequence: frameSequence,
+          timestamp,
+          uuid: `edit-${eventId}`,
+          activeStream: streamId ? { streamId, streamType: 'discord' } : undefined,
+          events: [],
+          deltas,
+          transition: createDefaultTransition(frameSequence, timestamp)
+        }, true);
+        console.log(`[EventHandler] Updated message facet ${facetId} (frame ${frameSequence}): ${(payload.content || '').substring(0, 50)}...`);
+      } else {
+        console.log(`[EventHandler] messageUpdate for unknown facet ${facetId}, skipping`);
+      }
+    }
+
+    // Handle discord:messageDelete - remove the event facet
+    if (event.topic === 'discord:messageDelete') {
+      const facetId = payload.messageId ? `msg-discord-${payload.messageId}` : null;
+      if (facetId && veilState.getState().facets.has(facetId)) {
+        const deltas = [{
+          type: 'removeFacet' as const,
+          id: facetId,
+          mode: 'delete' as const
+        }];
+        const frameSequence = veilState.getNextSequence();
+        const timestamp = new Date().toISOString();
+        veilState.applyFrame({
+          sequence: frameSequence,
+          timestamp,
+          uuid: `delete-${eventId}`,
+          activeStream: streamId ? { streamId, streamType: 'discord' } : undefined,
+          events: [],
+          deltas,
+          transition: createDefaultTransition(frameSequence, timestamp)
+        }, true);
+        console.log(`[EventHandler] Deleted message facet ${facetId} (frame ${frameSequence})`);
+      } else {
+        console.log(`[EventHandler] messageDelete for unknown facet ${facetId}, skipping`);
+      }
+    }
+
     // Handle signal:message events - create message facet via applyFrame
     if (event.topic === 'signal:message') {
+      // Use deterministic facet ID based on sender+timestamp so edits/deletes can find it
+      const signalMsgKey = (payload.senderUuid || payload.senderNumber) && payload.timestamp
+        ? `msg-signal-${payload.senderUuid || payload.senderNumber}-${payload.timestamp}`
+        : `msg-${eventId}`;
       const facet: Facet & { streamId?: string; state?: any } = {
         type: 'event',
-        id: `msg-${eventId}`,
+        id: signalMsgKey,
         content: `<${payload.sender || 'unknown'}> ${payload.content || ''}`,
         streamId,
         state: {
@@ -120,6 +183,69 @@ export class EventHandler {
       }, true); // skipEphemeralCleanup — preserve existing ephemeral facets
 
       console.log(`[EventHandler] Created message facet (frame ${frameSequence}) for ${payload.sender}: ${(payload.content || '').substring(0, 50)}...`);
+    }
+
+    // Handle signal:messageUpdate - rewrite existing event facet with edited content
+    if (event.topic === 'signal:messageUpdate') {
+      const senderId = payload.senderUuid || payload.senderNumber;
+      const facetId = senderId && payload.originalTimestamp
+        ? `msg-signal-${senderId}-${payload.originalTimestamp}`
+        : null;
+      if (facetId && veilState.getState().facets.has(facetId)) {
+        const deltas = [{
+          type: 'rewriteFacet' as const,
+          id: facetId,
+          changes: {
+            content: `<${payload.sender || 'unknown'}> ${payload.content || ''}`,
+            state: {
+              editedAt: payload.editedTimestamp || Date.now()
+            }
+          }
+        }];
+        const frameSequence = veilState.getNextSequence();
+        const timestamp = new Date().toISOString();
+        veilState.applyFrame({
+          sequence: frameSequence,
+          timestamp,
+          uuid: `edit-${eventId}`,
+          activeStream: streamId ? { streamId, streamType: 'signal' } : undefined,
+          events: [],
+          deltas,
+          transition: createDefaultTransition(frameSequence, timestamp)
+        }, true);
+        console.log(`[EventHandler] Updated signal message facet ${facetId} (frame ${frameSequence}): ${(payload.content || '').substring(0, 50)}...`);
+      } else {
+        console.log(`[EventHandler] signal:messageUpdate for unknown facet ${facetId}, skipping`);
+      }
+    }
+
+    // Handle signal:messageDelete - remove the event facet
+    if (event.topic === 'signal:messageDelete') {
+      const senderId = payload.senderUuid || payload.senderNumber;
+      const facetId = senderId && payload.targetTimestamp
+        ? `msg-signal-${senderId}-${payload.targetTimestamp}`
+        : null;
+      if (facetId && veilState.getState().facets.has(facetId)) {
+        const deltas = [{
+          type: 'removeFacet' as const,
+          id: facetId,
+          mode: 'delete' as const
+        }];
+        const frameSequence = veilState.getNextSequence();
+        const timestamp = new Date().toISOString();
+        veilState.applyFrame({
+          sequence: frameSequence,
+          timestamp,
+          uuid: `delete-${eventId}`,
+          activeStream: streamId ? { streamId, streamType: 'signal' } : undefined,
+          events: [],
+          deltas,
+          transition: createDefaultTransition(frameSequence, timestamp)
+        }, true);
+        console.log(`[EventHandler] Deleted signal message facet ${facetId} (frame ${frameSequence})`);
+      } else {
+        console.log(`[EventHandler] signal:messageDelete for unknown facet ${facetId}, skipping`);
+      }
     }
 
     // Handle agent:speech events - create speech facet via applyFrame so gRPC subscribers are notified
