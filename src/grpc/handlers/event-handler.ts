@@ -248,6 +248,35 @@ export class EventHandler {
       }
     }
 
+    // Handle bot:config events - create ephemeral bot-config facet so bot-runtime subscribers are notified
+    if (event.topic === 'bot:config') {
+      const targetAgent = payload.targetAgent;
+      if (targetAgent) {
+        const facet: Facet & { streamId?: string; agentId?: string; state?: any; ephemeral?: boolean } = {
+          type: 'bot-config',
+          id: `bot-config-${targetAgent}-${Date.now()}`,
+          content: '',
+          agentId: targetAgent,
+          ephemeral: true,
+          state: { ...payload },
+        };
+
+        const deltas = [{ type: 'addFacet' as const, facet }];
+        const frameSequence = veilState.getNextSequence();
+        const timestamp = new Date().toISOString();
+        veilState.applyFrame({
+          sequence: frameSequence,
+          timestamp,
+          uuid: `config-${eventId}`,
+          events: [],
+          deltas,
+          transition: createDefaultTransition(frameSequence, timestamp)
+        }, true);
+
+        console.log(`[EventHandler] Created bot-config facet (frame ${frameSequence}) for ${targetAgent}: ${JSON.stringify(payload)}`);
+      }
+    }
+
     // Handle agent:speech events - create speech facet via applyFrame so gRPC subscribers are notified
     if (event.topic === 'agent:speech') {
       const facet: Facet & { streamId?: string; agentId?: string; agentName?: string; state?: any; attachments?: any[] } = {
