@@ -189,6 +189,25 @@ export class VEILStateManager {
   }
 
   /**
+   * Atomically allocate the next sequence and apply a frame.
+   * Prevents race conditions where getNextSequence() is called but applyFrame()
+   * fails or another caller interleaves between the two calls.
+   *
+   * @param buildFrame - Callback that receives the allocated sequence and returns the frame to apply
+   * @param skipEphemeralCleanup - If true, skip ephemeral facet cleanup
+   * @returns The applied frame's changes, or empty array if the frame could not be applied
+   */
+  allocateAndApplyFrame(
+    buildFrame: (sequence: number, timestamp: string) => Frame,
+    skipEphemeralCleanup: boolean = false
+  ): FacetDelta[] {
+    const sequence = this.state.currentSequence + 1;
+    const timestamp = new Date().toISOString();
+    const frame = buildFrame(sequence, timestamp);
+    return this.applyFrame(frame, skipEphemeralCleanup);
+  }
+
+  /**
    * Get the current sequence number (last committed frame)
    */
   getCurrentSequence(): number {

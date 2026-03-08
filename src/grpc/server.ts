@@ -324,20 +324,21 @@ export function createGrpcServer(options: GrpcServerOptions): ConnectomeServer {
         console.error(`[GrpcServer] Failed to render context for activation ${activationId}: ${err.message}`);
       }
 
-      // Apply as a proper frame so subscribers are notified
-      const frameSequence = veilState.getNextSequence();
-      const timestamp = new Date().toISOString();
-      veilState.applyFrame({
-        sequence: frameSequence,
-        timestamp,
-        uuid: activationId,
-        activeStream: { streamId, streamType: 'grpc' },
-        events: [],
-        deltas,
-        transition: createDefaultTransition(frameSequence, timestamp)
-      }, true); // skipEphemeralCleanup — don't delete existing ephemeral facets
+      // Apply as a proper frame so subscribers are notified (atomic sequence allocation)
+      veilState.allocateAndApplyFrame(
+        (seq, ts) => ({
+          sequence: seq,
+          timestamp: ts,
+          uuid: activationId,
+          activeStream: { streamId, streamType: 'grpc' },
+          events: [],
+          deltas,
+          transition: createDefaultTransition(seq, ts)
+        }),
+        true // skipEphemeralCleanup — don't delete existing ephemeral facets
+      );
 
-      console.log(`[GrpcServer] Activation frame ${frameSequence} committed for ${agentId} on ${streamId}`);
+      console.log(`[GrpcServer] Activation frame ${veilState.getCurrentSequence()} committed for ${agentId} on ${streamId}`);
 
       // Update agent's last active time
       if (agent) {

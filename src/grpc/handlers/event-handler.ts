@@ -45,15 +45,43 @@ export class EventHandler {
    * Create facets for known event types
    * This allows GetContext to find messages in the VEIL state
    */
+  /**
+   * Helper: atomically allocate sequence + apply frame with try-catch protection.
+   * Prevents sequence gaps when applyFrame throws (e.g. bad facet data).
+   */
+  private safeApplyFrame(
+    veilState: ReturnType<typeof this.space.getVEILState>,
+    uuid: string,
+    deltas: any[],
+    activeStream?: { streamId: string; streamType: string },
+    skipEphemeralCleanup: boolean = true
+  ): number {
+    return veilState.allocateAndApplyFrame(
+      (seq, ts) => ({
+        sequence: seq,
+        timestamp: ts,
+        uuid,
+        activeStream,
+        events: [],
+        deltas,
+        transition: createDefaultTransition(seq, ts),
+      }),
+      skipEphemeralCleanup
+    ).length; // returns change count (0 means no-op but frame still applied)
+  }
+
   private createFacetsForEvent(event: SpaceEvent, eventId: string): void {
     const veilState = this.space.getVEILState();
     const payload = (event.payload || {}) as Record<string, any>;
     const streamId = payload.streamId || event.metadata?._streamId;
+    const discordStream = streamId ? { streamId, streamType: 'discord' } : undefined;
+    const signalStream = streamId ? { streamId, streamType: 'signal' } : undefined;
+
+    try {
 
     // Handle discord:message events - create message facet via applyFrame so
     // the facet is recorded in frame deltas with activeStream set (enables stream hierarchy)
     if (event.topic === 'discord:message') {
-      // Use deterministic facet ID based on Discord message ID so updates/deletes can find it
       const facetId = payload.messageId ? `msg-discord-${payload.messageId}` : `msg-${eventId}`;
       const facet: Facet & { streamId?: string; state?: any } = {
         type: 'event',
@@ -68,24 +96,13 @@ export class EventHandler {
           messageId: payload.messageId,
           channelId: payload.channelId,
           timestamp: payload.timestamp || Date.now(),
-          attachments: payload.attachments  // Preserve attachments for image processing
+          attachments: payload.attachments
         }
       };
 
       const deltas = [{ type: 'addFacet' as const, facet }];
-      const frameSequence = veilState.getNextSequence();
-      const timestamp = new Date().toISOString();
-      veilState.applyFrame({
-        sequence: frameSequence,
-        timestamp,
-        uuid: `msg-${eventId}`,
-        activeStream: streamId ? { streamId, streamType: 'discord' } : undefined,
-        events: [],
-        deltas,
-        transition: createDefaultTransition(frameSequence, timestamp)
-      }, true); // skipEphemeralCleanup — preserve existing ephemeral facets
-
-      console.log(`[EventHandler] Created message facet (frame ${frameSequence}) for ${payload.authorName}: ${(payload.content || '').substring(0, 50)}...`);
+      this.safeApplyFrame(veilState, `msg-${eventId}`, deltas, discordStream);
+      console.log(`[EventHandler] Created message facet (frame ${veilState.getCurrentSequence()}) for ${payload.authorName}: ${(payload.content || '').substring(0, 50)}...`);
     }
 
     // Handle discord:messageUpdate - rewrite existing event facet with edited content
@@ -97,23 +114,11 @@ export class EventHandler {
           id: facetId,
           changes: {
             content: `<${payload.authorName || 'unknown'}> ${payload.content || ''}`,
-            state: {
-              editedAt: payload.editedTimestamp || Date.now()
-            }
+            state: { editedAt: payload.editedTimestamp || Date.now() }
           }
         }];
-        const frameSequence = veilState.getNextSequence();
-        const timestamp = new Date().toISOString();
-        veilState.applyFrame({
-          sequence: frameSequence,
-          timestamp,
-          uuid: `edit-${eventId}`,
-          activeStream: streamId ? { streamId, streamType: 'discord' } : undefined,
-          events: [],
-          deltas,
-          transition: createDefaultTransition(frameSequence, timestamp)
-        }, true);
-        console.log(`[EventHandler] Updated message facet ${facetId} (frame ${frameSequence}): ${(payload.content || '').substring(0, 50)}...`);
+        this.safeApplyFrame(veilState, `edit-${eventId}`, deltas, discordStream);
+        console.log(`[EventHandler] Updated message facet ${facetId} (frame ${veilState.getCurrentSequence()}): ${(payload.content || '').substring(0, 50)}...`);
       } else {
         console.log(`[EventHandler] messageUpdate for unknown facet ${facetId}, skipping`);
       }
@@ -123,23 +128,9 @@ export class EventHandler {
     if (event.topic === 'discord:messageDelete') {
       const facetId = payload.messageId ? `msg-discord-${payload.messageId}` : null;
       if (facetId && veilState.getState().facets.has(facetId)) {
-        const deltas = [{
-          type: 'removeFacet' as const,
-          id: facetId,
-          mode: 'delete' as const
-        }];
-        const frameSequence = veilState.getNextSequence();
-        const timestamp = new Date().toISOString();
-        veilState.applyFrame({
-          sequence: frameSequence,
-          timestamp,
-          uuid: `delete-${eventId}`,
-          activeStream: streamId ? { streamId, streamType: 'discord' } : undefined,
-          events: [],
-          deltas,
-          transition: createDefaultTransition(frameSequence, timestamp)
-        }, true);
-        console.log(`[EventHandler] Deleted message facet ${facetId} (frame ${frameSequence})`);
+        const deltas = [{ type: 'removeFacet' as const, id: facetId, mode: 'delete' as const }];
+        this.safeApplyFrame(veilState, `delete-${eventId}`, deltas, discordStream);
+        console.log(`[EventHandler] Deleted message facet ${facetId} (frame ${veilState.getCurrentSequence()})`);
       } else {
         console.log(`[EventHandler] messageDelete for unknown facet ${facetId}, skipping`);
       }
@@ -147,7 +138,6 @@ export class EventHandler {
 
     // Handle signal:message events - create message facet via applyFrame
     if (event.topic === 'signal:message') {
-      // Use deterministic facet ID based on sender+timestamp so edits/deletes can find it
       const signalMsgKey = (payload.senderUuid || payload.senderNumber) && payload.timestamp
         ? `msg-signal-${payload.senderUuid || payload.senderNumber}-${payload.timestamp}`
         : `msg-${eventId}`;
@@ -165,24 +155,13 @@ export class EventHandler {
           groupName: payload.groupName,
           botPhone: payload.botPhone,
           timestamp: payload.timestamp || Date.now(),
-          attachments: payload.attachments  // Preserve attachments for image processing
+          attachments: payload.attachments
         }
       };
 
       const deltas = [{ type: 'addFacet' as const, facet }];
-      const frameSequence = veilState.getNextSequence();
-      const timestamp = new Date().toISOString();
-      veilState.applyFrame({
-        sequence: frameSequence,
-        timestamp,
-        uuid: `msg-${eventId}`,
-        activeStream: streamId ? { streamId, streamType: 'signal' } : undefined,
-        events: [],
-        deltas,
-        transition: createDefaultTransition(frameSequence, timestamp)
-      }, true); // skipEphemeralCleanup — preserve existing ephemeral facets
-
-      console.log(`[EventHandler] Created message facet (frame ${frameSequence}) for ${payload.sender}: ${(payload.content || '').substring(0, 50)}...`);
+      this.safeApplyFrame(veilState, `msg-${eventId}`, deltas, signalStream);
+      console.log(`[EventHandler] Created message facet (frame ${veilState.getCurrentSequence()}) for ${payload.sender}: ${(payload.content || '').substring(0, 50)}...`);
     }
 
     // Handle signal:messageUpdate - rewrite existing event facet with edited content
@@ -197,23 +176,11 @@ export class EventHandler {
           id: facetId,
           changes: {
             content: `<${payload.sender || 'unknown'}> ${payload.content || ''}`,
-            state: {
-              editedAt: payload.editedTimestamp || Date.now()
-            }
+            state: { editedAt: payload.editedTimestamp || Date.now() }
           }
         }];
-        const frameSequence = veilState.getNextSequence();
-        const timestamp = new Date().toISOString();
-        veilState.applyFrame({
-          sequence: frameSequence,
-          timestamp,
-          uuid: `edit-${eventId}`,
-          activeStream: streamId ? { streamId, streamType: 'signal' } : undefined,
-          events: [],
-          deltas,
-          transition: createDefaultTransition(frameSequence, timestamp)
-        }, true);
-        console.log(`[EventHandler] Updated signal message facet ${facetId} (frame ${frameSequence}): ${(payload.content || '').substring(0, 50)}...`);
+        this.safeApplyFrame(veilState, `edit-${eventId}`, deltas, signalStream);
+        console.log(`[EventHandler] Updated signal message facet ${facetId} (frame ${veilState.getCurrentSequence()}): ${(payload.content || '').substring(0, 50)}...`);
       } else {
         console.log(`[EventHandler] signal:messageUpdate for unknown facet ${facetId}, skipping`);
       }
@@ -226,23 +193,9 @@ export class EventHandler {
         ? `msg-signal-${senderId}-${payload.targetTimestamp}`
         : null;
       if (facetId && veilState.getState().facets.has(facetId)) {
-        const deltas = [{
-          type: 'removeFacet' as const,
-          id: facetId,
-          mode: 'delete' as const
-        }];
-        const frameSequence = veilState.getNextSequence();
-        const timestamp = new Date().toISOString();
-        veilState.applyFrame({
-          sequence: frameSequence,
-          timestamp,
-          uuid: `delete-${eventId}`,
-          activeStream: streamId ? { streamId, streamType: 'signal' } : undefined,
-          events: [],
-          deltas,
-          transition: createDefaultTransition(frameSequence, timestamp)
-        }, true);
-        console.log(`[EventHandler] Deleted signal message facet ${facetId} (frame ${frameSequence})`);
+        const deltas = [{ type: 'removeFacet' as const, id: facetId, mode: 'delete' as const }];
+        this.safeApplyFrame(veilState, `delete-${eventId}`, deltas, signalStream);
+        console.log(`[EventHandler] Deleted signal message facet ${facetId} (frame ${veilState.getCurrentSequence()})`);
       } else {
         console.log(`[EventHandler] signal:messageDelete for unknown facet ${facetId}, skipping`);
       }
@@ -262,18 +215,8 @@ export class EventHandler {
         };
 
         const deltas = [{ type: 'addFacet' as const, facet }];
-        const frameSequence = veilState.getNextSequence();
-        const timestamp = new Date().toISOString();
-        veilState.applyFrame({
-          sequence: frameSequence,
-          timestamp,
-          uuid: `config-${eventId}`,
-          events: [],
-          deltas,
-          transition: createDefaultTransition(frameSequence, timestamp)
-        }, true);
-
-        console.log(`[EventHandler] Created bot-config facet (frame ${frameSequence}) for ${targetAgent}: ${JSON.stringify(payload)}`);
+        this.safeApplyFrame(veilState, `config-${eventId}`, deltas);
+        console.log(`[EventHandler] Created bot-config facet (frame ${veilState.getCurrentSequence()}) for ${targetAgent}: ${JSON.stringify(payload)}`);
       }
     }
 
@@ -291,25 +234,18 @@ export class EventHandler {
         }
       };
 
-      // Forward attachments if present (inline base64 images/files)
       if (payload.attachments?.length) {
         facet.attachments = payload.attachments;
       }
 
       const deltas = [{ type: 'addFacet' as const, facet }];
-      const frameSequence = veilState.getNextSequence();
-      const timestamp = new Date().toISOString();
-      veilState.applyFrame({
-        sequence: frameSequence,
-        timestamp,
-        uuid: `speech-${eventId}`,
-        activeStream: streamId ? { streamId, streamType: 'grpc' } : undefined,
-        events: [],
-        deltas,
-        transition: createDefaultTransition(frameSequence, timestamp)
-      }, true); // skipEphemeralCleanup — preserve existing ephemeral facets
+      const grpcStream = streamId ? { streamId, streamType: 'grpc' } : undefined;
+      this.safeApplyFrame(veilState, `speech-${eventId}`, deltas, grpcStream);
+      console.log(`[EventHandler] Created speech facet (frame ${veilState.getCurrentSequence()}) for ${payload.agentName}: ${(payload.content || '').substring(0, 50)}...`);
+    }
 
-      console.log(`[EventHandler] Created speech facet (frame ${frameSequence}) for ${payload.agentName}: ${(payload.content || '').substring(0, 50)}...`);
+    } catch (error: any) {
+      console.error(`[EventHandler] Failed to create facet for ${event.topic}: ${error.message}`);
     }
   }
 
