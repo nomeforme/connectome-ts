@@ -220,6 +220,36 @@ export class EventHandler {
       }
     }
 
+    // Handle agent:command events - create ephemeral facet for bot-runtime to pick up (!stop, !steer)
+    if (event.topic === 'agent:command') {
+      const facet: Facet & { state?: any; ephemeral?: boolean } = {
+        type: 'agent-command',
+        id: `agent-command-${eventId}`,
+        content: '',
+        ephemeral: true,
+        state: { ...payload },
+      };
+
+      const deltas = [{ type: 'addFacet' as const, facet }];
+      this.safeApplyFrame(veilState, `cmd-${eventId}`, deltas);
+      console.log(`[EventHandler] Created agent-command facet (frame ${veilState.getCurrentSequence()}): ${payload.type} → ${payload.targetAgent}`);
+    }
+
+    // Handle agent:typing-stop events - create ephemeral facet so axon subscribers clear typing indicators
+    if (event.topic === 'agent:typing-stop') {
+      const facet: Facet & { state?: any; ephemeral?: boolean } = {
+        type: 'agent-typing-stop',
+        id: `typing-stop-${eventId}`,
+        content: '',
+        ephemeral: true,
+        state: { ...payload },
+      };
+
+      const deltas = [{ type: 'addFacet' as const, facet }];
+      this.safeApplyFrame(veilState, `typing-stop-${eventId}`, deltas);
+      console.log(`[EventHandler] Created typing-stop facet (frame ${veilState.getCurrentSequence()}) for ${payload.targetAgent}`);
+    }
+
     // Handle agent:speech events - create speech facet via applyFrame so gRPC subscribers are notified
     if (event.topic === 'agent:speech') {
       const facet: Facet & { streamId?: string; agentId?: string; agentName?: string; state?: any; attachments?: any[] } = {
@@ -230,7 +260,8 @@ export class EventHandler {
         agentId: payload.agentId,
         agentName: payload.agentName,
         state: {
-          timestamp: payload.timestamp || Date.now()
+          timestamp: payload.timestamp || Date.now(),
+          ...(payload.cyclePending ? { cyclePending: true } : {}),
         }
       };
 
