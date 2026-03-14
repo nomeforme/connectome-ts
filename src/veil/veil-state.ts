@@ -227,7 +227,10 @@ export class VEILStateManager {
       if (info.metadata) {
         existing.metadata = { ...existing.metadata, ...info.metadata };
       }
-      // Preserve original parentId and forkSequence — don't overwrite
+      // Update parentId if a new one is provided (substream reused from different context)
+      if (info.parentId) {
+        existing.parentId = info.parentId;
+      }
       // Ensure participants array exists and append the new creator
       if (!existing.participants) {
         existing.participants = [];
