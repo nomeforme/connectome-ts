@@ -63,6 +63,7 @@ export interface StreamInfo {
   metadata?: Record<string, any>;  // Any additional context if needed
   parentId?: string;          // Parent stream ID (for branched streams)
   forkSequence?: number;      // Frame sequence at fork point
+  participants?: string[];    // Agents that have created/joined this stream
 }
 
 // Stream reference with type information

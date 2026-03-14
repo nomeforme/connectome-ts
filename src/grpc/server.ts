@@ -135,7 +135,8 @@ export function createGrpcServer(options: GrpcServerOptions): ConnectomeServer {
       const forkSequence = parentStreamId ? veilState.getCurrentSequence() : undefined;
 
       // Register stream in VEILState (enables hierarchy-aware context)
-      veilState.registerStream({
+      // Idempotent: if the stream already exists, this joins it instead of failing
+      const { created } = veilState.registerStream({
         id: streamId,
         name: metadata?.channelName || streamId,
         metadata,
@@ -143,9 +144,9 @@ export function createGrpcServer(options: GrpcServerOptions): ConnectomeServer {
         forkSequence,
       });
 
-      // Emit stream creation event
+      // Emit stream creation/join event
       space.emit({
-        topic: 'stream:create',
+        topic: created ? 'stream:create' : 'stream:join',
         source: {
           componentId: 'grpc-server',
           componentPath: ['grpc', 'server']
@@ -159,7 +160,11 @@ export function createGrpcServer(options: GrpcServerOptions): ConnectomeServer {
         timestamp: Date.now()
       });
 
-      console.log(`[GrpcServer] Created stream: ${streamId} (${streamType})${parentStreamId ? ` parent=${parentStreamId} fork@${forkSequence}` : ' (no parent)'} [raw parentStreamId=${JSON.stringify(parentStreamId)}]`);
+      if (created) {
+        console.log(`[GrpcServer] Created stream: ${streamId} (${streamType})${parentStreamId ? ` parent=${parentStreamId} fork@${forkSequence}` : ' (no parent)'} [raw parentStreamId=${JSON.stringify(parentStreamId)}]`);
+      } else {
+        console.log(`[GrpcServer] Joined existing stream: ${streamId} (${streamType})${metadata?.createdBy ? ` by=${metadata.createdBy}` : ''}`);
+      }
 
       return {
         streamId,

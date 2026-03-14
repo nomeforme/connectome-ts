@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus MCP
 
-This project is indexed by GitNexus as **connectome-ts** (2511 symbols, 7279 relationships, 201 execution flows).
+This project is indexed by GitNexus as **connectome-ts** (2524 symbols, 7319 relationships, 202 execution flows).
 
 GitNexus provides a knowledge graph over this codebase — call chains, blast radius, execution flows, and semantic search.
 

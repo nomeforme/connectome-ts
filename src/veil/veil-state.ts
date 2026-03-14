@@ -215,10 +215,39 @@ export class VEILStateManager {
   }
 
   /**
-   * Register a stream in VEIL state (called on stream creation)
+   * Register a stream in VEIL state (called on stream creation).
+   * Idempotent: if the stream already exists, merges new metadata and
+   * appends the caller to the participants list instead of overwriting.
+   * @returns `{ created: true }` for new streams, `{ created: false }` for joins
    */
-  registerStream(info: StreamInfo): void {
+  registerStream(info: StreamInfo): { created: boolean } {
+    const existing = this.state.streams.get(info.id);
+    if (existing) {
+      // Merge metadata (new keys win, but don't clobber existing ones that aren't in the new set)
+      if (info.metadata) {
+        existing.metadata = { ...existing.metadata, ...info.metadata };
+      }
+      // Preserve original parentId and forkSequence — don't overwrite
+      // Ensure participants array exists and append the new creator
+      if (!existing.participants) {
+        existing.participants = [];
+      }
+      const newParticipant = info.metadata?.createdBy as string | undefined;
+      if (newParticipant && !existing.participants.includes(newParticipant)) {
+        existing.participants.push(newParticipant);
+      }
+      return { created: false };
+    }
+    // New stream — seed participants from createdBy if present
+    if (!info.participants) {
+      info.participants = [];
+    }
+    const creator = info.metadata?.createdBy as string | undefined;
+    if (creator && !info.participants.includes(creator)) {
+      info.participants.push(creator);
+    }
     this.state.streams.set(info.id, info);
+    return { created: true };
   }
 
   /**
@@ -933,9 +962,21 @@ export class VEILStateManager {
 
   private notifyListeners(): void {
     const state = this.getState();
-    for (const listener of [...this.listeners]) {
-      listener(state);
-    }
+    const listeners = [...this.listeners];
+    queueMicrotask(() => {
+      const start = performance.now();
+      for (const listener of listeners) {
+        try {
+          listener(state);
+        } catch (error: any) {
+          console.error(`[VEILState] Listener error: ${error.message}`);
+        }
+      }
+      const elapsed = performance.now() - start;
+      if (elapsed > 100) {
+        console.warn(`[VEILState] Slow listener notification: ${elapsed.toFixed(1)}ms for ${listeners.length} listeners`);
+      }
+    });
   }
   
   /**
