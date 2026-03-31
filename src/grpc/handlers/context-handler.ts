@@ -71,48 +71,55 @@ export class ContextHandler {
       console.log(`[ContextHandler] Stream ${streamId}: registered=${!!streamEntry}, parentage=${parentage ? `parentId=${parentage.parentId} fork@${parentage.forkSequence}` : 'none'}, totalRegisteredStreams=${registeredStreams.size}`);
     }
 
-    // Reverse-iterate to collect up to maxFrames matching frames, with early exit
-    // Frames are tagged as focused/unfocused for stream-aware rendering
+    // Collect frames in two passes: first gather ALL direct/parent frames for this stream
+    // (these are the conversation), then fill remaining budget with ambient frames.
+    // This prevents ambient frames from crowding out backfilled historical conversation.
     let frames: any[];
     const unfocusedFrameIds = new Set<number>(); // sequences of frames from other streams
     if (maxFrames > 0 || streamId) {
-      const collected: any[] = [];
+      const directFrames: any[] = [];
+      const ambientFrames: any[] = [];
       let directCount = 0;
       let parentCount = 0;
       let ambientCount = 0;
       let unfocusedCount = 0;
       const limit = maxFrames > 0 ? maxFrames : frameHistory.length;
-      for (let i = frameHistory.length - 1; i >= 0 && collected.length < limit; i--) {
-        const f = frameHistory[i];
 
-        // Skip frames with no deltas — they have no content to contribute
+      for (let i = frameHistory.length - 1; i >= 0; i--) {
+        const f = frameHistory[i];
         if (!f.deltas || f.deltas.length === 0) continue;
 
         if (streamId && f.activeStream) {
           const fStreamId = f.activeStream.streamId;
           if (fStreamId === streamId) {
             directCount++;
-            // Direct match — always include
+            directFrames.push(f);
           } else if (parentage && fStreamId === parentage.parentId && f.sequence <= parentage.forkSequence) {
             parentCount++;
-            // Parent stream frame before fork point — include (inherited context)
+            directFrames.push(f);
           } else if (includeUnfocused) {
-            // Different stream — include as unfocused (peripheral awareness)
             unfocusedCount++;
             unfocusedFrameIds.add(f.sequence);
+            ambientFrames.push(f);
           } else {
-            continue; // Skip — cross-stream rendering disabled
+            continue;
           }
         } else if (!f.activeStream) {
+          ambientFrames.push(f);
           ambientCount++;
         }
-        // Frames with no activeStream are ambient — always included
-        collected.push(f);
       }
-      collected.reverse(); // Restore chronological order
+
+      // Direct/parent frames get priority, ambient fills the remaining budget
+      const directToKeep = directFrames.slice(0, limit);
+      const ambientBudget = Math.max(0, limit - directToKeep.length);
+      const ambientToKeep = ambientFrames.slice(0, ambientBudget);
+
+      const collected = [...directToKeep, ...ambientToKeep];
+      collected.sort((a, b) => a.sequence - b.sequence); // Restore chronological order
       frames = collected;
 
-      console.log(`[ContextHandler] Frame collection: direct=${directCount} parent=${parentCount} unfocused=${unfocusedCount} ambient=${ambientCount} total=${collected.length}`);
+      console.log(`[ContextHandler] Frame collection: direct=${directCount} parent=${parentCount} unfocused=${unfocusedCount} ambient=${ambientCount} total=${collected.length} (direct kept=${directToKeep.length}, ambient kept=${ambientToKeep.length})`);
     } else {
       frames = frameHistory as any[];
     }

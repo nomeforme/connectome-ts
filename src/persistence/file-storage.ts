@@ -490,8 +490,13 @@ export class FileStorageAdapter implements StorageAdapter {
    * Load frame history from ALL snapshots on disk, not just the latest.
    * Collects bucket refs across all snapshots, deduplicates, and loads
    * up to maxFrames (keeping the newest).
+   *
+   * When minFramesPerStream > 0, performs a two-pass load:
+   *  1. Load newest maxFrames globally (existing behavior)
+   *  2. Check which streams are below the minimum message frame count
+   *  3. Load additional older buckets that contain those streams
    */
-  async loadFullFrameHistory(maxFrames: number): Promise<Frame[]> {
+  async loadFullFrameHistory(maxFrames: number, minFramesPerStream: number = 0): Promise<Frame[]> {
     const allRefs = new Map<string, FrameBucketRef>();
 
     try {
@@ -525,8 +530,9 @@ export class FileStorageAdapter implements StorageAdapter {
     const sortedRefs = Array.from(allRefs.values())
       .sort((a, b) => a.startSequence - b.startSequence);
 
-    // Select refs to load (keep newest up to maxFrames)
+    // Pass 1: Select refs to load (keep newest up to maxFrames)
     const totalAvailable = sortedRefs.reduce((sum, ref) => sum + ref.frameCount, 0);
+    const loadedRefHashes = new Set<string>();
     let refsToLoad: FrameBucketRef[];
     if (totalAvailable <= maxFrames) {
       refsToLoad = sortedRefs;
@@ -539,10 +545,111 @@ export class FileStorageAdapter implements StorageAdapter {
         if (accumulated >= maxFrames) break;
       }
     }
+    for (const ref of refsToLoad) loadedRefHashes.add(ref.hash);
 
     console.log(`[FileStorageAdapter] Loading full frame history: ${refsToLoad.length} buckets from ${allRefs.size} unique across all snapshots`);
 
-    const frames = await this.bucketStore.loadFrames(refsToLoad);
+    let frames = await this.bucketStore.loadFrames(refsToLoad);
+
+    // Pass 2: Per-stream backfill — load older buckets for streams below minimum
+    if (minFramesPerStream > 0) {
+      const MESSAGE_TYPES = new Set(['event', 'speech', 'thought', 'action']);
+
+      // Count message frames per stream in what we loaded
+      const streamCounts = new Map<string, number>();
+      for (const frame of frames) {
+        const sid = frame.activeStream?.streamId;
+        if (!sid) continue;
+        for (const delta of frame.deltas || []) {
+          if (delta.type === 'addFacet' && delta.facet && MESSAGE_TYPES.has((delta.facet as any).type)) {
+            streamCounts.set(sid, (streamCounts.get(sid) || 0) + 1);
+            break;
+          }
+        }
+      }
+
+      // Find streams below minimum (includes streams with zero frames in initial load)
+      const deficientStreams = new Set<string>();
+      for (const [sid, count] of streamCounts) {
+        if (count < minFramesPerStream) deficientStreams.add(sid);
+      }
+
+      // Also discover streams that exist in older buckets but have zero frames
+      // in the initial load — these are completely invisible without backfill
+      const olderRefs = sortedRefs.filter(r => !loadedRefHashes.has(r.hash));
+      for (const ref of olderRefs) {
+        if (ref.streamIds) {
+          for (const sid of ref.streamIds) {
+            if (!streamCounts.has(sid)) {
+              deficientStreams.add(sid);
+            }
+          }
+        }
+      }
+
+      if (deficientStreams.size > 0) {
+        // Find older buckets that might contain deficient streams.
+        // Check streamIds metadata first; fall back to scanning bucket content.
+        const backfillRefs: FrameBucketRef[] = [];
+
+        for (const ref of olderRefs) {
+          if (ref.streamIds) {
+            // New-format bucket: has stream index metadata
+            const hasDeficient = ref.streamIds.some(sid => deficientStreams.has(sid));
+            if (hasDeficient) backfillRefs.push(ref);
+          } else {
+            // Old-format bucket: no metadata, must scan. Load it speculatively.
+            backfillRefs.push(ref);
+          }
+        }
+
+        if (backfillRefs.length > 0) {
+          console.log(`[FileStorageAdapter] Per-stream backfill: ${deficientStreams.size} streams below min ${minFramesPerStream}, loading ${backfillRefs.length} older buckets`);
+          const backfillFrames = await this.bucketStore.loadFrames(backfillRefs);
+
+          // Sort newest-first so we keep the most recent history per stream
+          backfillFrames.sort((a, b) => b.sequence - a.sequence);
+
+          // First pass: discover any new streams in old-format buckets that weren't
+          // in the initial load or in streamIds metadata. Add them to deficientStreams.
+          for (const frame of backfillFrames) {
+            const sid = frame.activeStream?.streamId;
+            if (!sid || streamCounts.has(sid) || deficientStreams.has(sid)) continue;
+            for (const delta of frame.deltas || []) {
+              if (delta.type === 'addFacet' && delta.facet && MESSAGE_TYPES.has((delta.facet as any).type)) {
+                deficientStreams.add(sid);
+                break;
+              }
+            }
+          }
+
+          // Second pass: keep message frames from deficient streams (newest first)
+          let kept = 0;
+          for (const frame of backfillFrames) {
+            const sid = frame.activeStream?.streamId;
+            if (!sid || !deficientStreams.has(sid)) continue;
+
+            let isMessage = false;
+            for (const delta of frame.deltas || []) {
+              if (delta.type === 'addFacet' && delta.facet && MESSAGE_TYPES.has((delta.facet as any).type)) {
+                isMessage = true;
+                break;
+              }
+            }
+            if (!isMessage) continue;
+
+            frames.push(frame);
+            kept++;
+            const newCount = (streamCounts.get(sid) || 0) + 1;
+            streamCounts.set(sid, newCount);
+            if (newCount >= minFramesPerStream) {
+              deficientStreams.delete(sid);
+            }
+          }
+          console.log(`[FileStorageAdapter] Per-stream backfill: kept ${kept} message frames, ${deficientStreams.size} streams still below min`);
+        }
+      }
+    }
 
     // Deduplicate by sequence (overlapping bucket boundaries can cause duplicates)
     const frameMap = new Map<number, Frame>();
@@ -552,10 +659,8 @@ export class FileStorageAdapter implements StorageAdapter {
     const deduped = Array.from(frameMap.values())
       .sort((a, b) => a.sequence - b.sequence);
 
-    if (deduped.length > maxFrames) {
-      return deduped.slice(deduped.length - maxFrames);
-    }
-
+    // Don't trim to maxFrames here — let VEILStateManager.trimFrameHistory handle
+    // the per-stream-aware trimming after restore
     return deduped;
   }
 

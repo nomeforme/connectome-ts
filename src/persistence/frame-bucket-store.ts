@@ -25,6 +25,8 @@ export interface FrameBucketRef {
   startSequence: number;
   endSequence: number;
   frameCount: number;
+  /** Unique stream IDs with message-bearing frames in this bucket */
+  streamIds?: string[];
 }
 
 export interface FrameBucketStoreConfig {
@@ -96,12 +98,27 @@ export class FrameBucketStore {
       // Add to cache
       this.addToCache(bucket);
       
+      // Collect unique stream IDs with message-bearing frames
+      const MESSAGE_TYPES = new Set(['event', 'speech', 'thought', 'action']);
+      const streamIdSet = new Set<string>();
+      for (const frame of bucketFrames) {
+        const sid = frame.activeStream?.streamId;
+        if (!sid) continue;
+        for (const delta of frame.deltas || []) {
+          if (delta.type === 'addFacet' && delta.facet && MESSAGE_TYPES.has((delta.facet as any).type)) {
+            streamIdSet.add(sid);
+            break;
+          }
+        }
+      }
+
       // Create reference (without frames)
       refs.push({
         hash: bucket.hash,
         startSequence: bucket.startSequence,
         endSequence: bucket.endSequence,
-        frameCount: bucket.frameCount
+        frameCount: bucket.frameCount,
+        streamIds: streamIdSet.size > 0 ? [...streamIdSet] : undefined,
       });
     }
     

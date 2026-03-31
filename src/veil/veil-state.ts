@@ -36,6 +36,12 @@ export class VEILStateManager {
   // Frame history limit (0 = unlimited for backward compat)
   private maxFrameHistory: number = 0;
 
+  // Per-stream minimum conversation frame retention (0 = disabled)
+  private minFramesPerStream: number = 0;
+
+  // Running count of conversation frames per stream (for O(1) protection checks)
+  private streamConversationFrameCounts: Map<string, number> = new Map();
+
   constructor() {
     this.state = {
       facets: new Map(),
@@ -70,26 +76,208 @@ export class VEILStateManager {
     'agent-activation', 'rendered-context',
   ]);
 
+  /** Facet types that represent actual visible messages (for per-stream retention counting).
+   *  Excludes agent-activation/rendered-context which are ephemeral infrastructure —
+   *  they outnumber real messages ~20:1 and would make minFramesPerStream meaningless. */
+  private static readonly MESSAGE_FACET_TYPES = new Set([
+    'event', 'speech', 'thought', 'action',
+  ]);
+
   /**
-   * Trim frame history to maxFrameHistory limit.
-   * Removes oldest frames and cleans up:
-   * - historicalStateCache for evicted sequences
-   * - conversation facets introduced by evicted frames (event, speech, thought, action, etc.)
+   * Set the minimum number of message-bearing frames to retain per stream.
+   * When trimming, frames that would drop a stream below this threshold are protected.
+   * @param min Minimum message frames per stream (0 = disabled)
+   */
+  setMinFramesPerStream(min: number): void {
+    this.minFramesPerStream = min;
+  }
+
+  /**
+   * Rebuild the running stream conversation frame counts from current frame history.
+   * Called after snapshot restore when the counts need to be reconstructed.
+   */
+  rebuildStreamConversationCounts(): void {
+    this.streamConversationFrameCounts.clear();
+    for (const frame of this.state.frameHistory) {
+      this.trackFrameForStreamCounts(frame);
+    }
+    if (this.streamConversationFrameCounts.size > 0) {
+      const totalMessages = [...this.streamConversationFrameCounts.values()].reduce((a, b) => a + b, 0);
+      const belowMin = this.minFramesPerStream > 0
+        ? [...this.streamConversationFrameCounts.values()].filter(c => c <= this.minFramesPerStream).length
+        : 0;
+      console.log(`[VEILState] Rebuilt message counts: ${this.streamConversationFrameCounts.size} streams with messages (${totalMessages} total), ${belowMin} at or below min ${this.minFramesPerStream}`);
+    }
+  }
+
+  /**
+   * Check if a frame has at least one message-bearing addFacet delta (event, speech, thought, action).
+   * Excludes agent-activation/rendered-context which are ephemeral infrastructure.
+   */
+  private isMessageFrame(frame: Frame): boolean {
+    for (const delta of frame.deltas) {
+      if (delta.type === 'addFacet' && delta.facet &&
+          VEILStateManager.MESSAGE_FACET_TYPES.has(delta.facet.type)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Update the running stream conversation frame counter after a frame is added.
+   */
+  private trackFrameForStreamCounts(frame: Frame): void {
+    const streamId = frame.activeStream?.streamId;
+    if (!streamId) return;
+    if (this.isMessageFrame(frame)) {
+      this.streamConversationFrameCounts.set(
+        streamId,
+        (this.streamConversationFrameCounts.get(streamId) || 0) + 1
+      );
+    }
+  }
+
+  /**
+   * Decrement stream conversation frame count when evicting a frame.
+   */
+  private untrackFrameForStreamCounts(frame: Frame): void {
+    const streamId = frame.activeStream?.streamId;
+    if (!streamId) return;
+    if (this.isMessageFrame(frame)) {
+      const current = this.streamConversationFrameCounts.get(streamId) || 0;
+      if (current <= 1) {
+        this.streamConversationFrameCounts.delete(streamId);
+      } else {
+        this.streamConversationFrameCounts.set(streamId, current - 1);
+      }
+    }
+  }
+
+  /**
+   * Trim frame history to maxFrameHistory limit with per-stream minimum retention.
+   *
+   * When minFramesPerStream > 0, frames in the eviction zone are protected if
+   * evicting them would drop their stream below the minimum conversation frame count.
+   * A hard cap of 1.5x maxFrameHistory prevents unbounded growth.
+   *
    * State/ambient/config facets persist independently of frame history.
    */
   private trimFrameHistory(): void {
     if (this.maxFrameHistory <= 0) return;
 
-    const excess = this.state.frameHistory.length - this.maxFrameHistory;
+    const totalFrames = this.state.frameHistory.length;
+    const excess = totalFrames - this.maxFrameHistory;
     if (excess <= 0) return;
 
-    // Get the sequences being evicted (oldest frames)
-    const evictedFrames = this.state.frameHistory.slice(0, excess);
+    // Fast path: no per-stream protection
+    if (this.minFramesPerStream <= 0) {
+      this.evictOldestFrames(excess);
+      return;
+    }
 
-    // Trim the frame history
-    this.state.frameHistory = this.state.frameHistory.slice(excess);
+    // Per-stream protection: walk candidate eviction zone and protect frames
+    // whose eviction would drop their stream below the minimum.
+    // Use running counts (O(1) per stream lookup) to decide protection.
+    const protectedIndices = new Set<number>();
+    const simulatedCounts = new Map(this.streamConversationFrameCounts);
 
-    // Collect facet IDs added by evicted frames (candidates for cleanup)
+    for (let i = 0; i < excess; i++) {
+      const frame = this.state.frameHistory[i];
+      const streamId = frame.activeStream?.streamId;
+      if (!streamId) continue; // Ambient frames never protected
+
+      if (!this.isMessageFrame(frame)) continue;
+
+      const remaining = simulatedCounts.get(streamId) || 0;
+      if (remaining <= this.minFramesPerStream) {
+        protectedIndices.add(i);
+      } else {
+        simulatedCounts.set(streamId, remaining - 1);
+      }
+    }
+
+    // Hard cap: 1.5x maxFrameHistory — prevent unbounded growth from many streams
+    const hardCap = Math.floor(this.maxFrameHistory * 1.5);
+    const projectedSize = totalFrames - excess + protectedIndices.size;
+
+    if (projectedSize > hardCap) {
+      // Unprotect from streams with the most remaining frames first
+      const protectedByStream = new Map<string, number[]>();
+      for (const idx of protectedIndices) {
+        const sid = this.state.frameHistory[idx].activeStream!.streamId;
+        if (!protectedByStream.has(sid)) protectedByStream.set(sid, []);
+        protectedByStream.get(sid)!.push(idx);
+      }
+
+      const sortedStreams = [...protectedByStream.entries()]
+        .sort((a, b) => (simulatedCounts.get(b[0]) || 0) - (simulatedCounts.get(a[0]) || 0));
+
+      let toUnprotect = projectedSize - hardCap;
+      for (const [, indices] of sortedStreams) {
+        if (toUnprotect <= 0) break;
+        indices.sort((a, b) => a - b); // oldest first
+        for (const idx of indices) {
+          if (toUnprotect <= 0) break;
+          protectedIndices.delete(idx);
+          toUnprotect--;
+        }
+      }
+    }
+
+    if (protectedIndices.size === 0) {
+      this.evictOldestFrames(excess);
+      return;
+    }
+
+    // Build new frame history: protected + retained
+    const evictedFrames: Frame[] = [];
+    const newHistory: Frame[] = [];
+
+    for (let i = 0; i < excess; i++) {
+      if (protectedIndices.has(i)) {
+        newHistory.push(this.state.frameHistory[i]);
+      } else {
+        const frame = this.state.frameHistory[i];
+        evictedFrames.push(frame);
+        this.untrackFrameForStreamCounts(frame);
+      }
+    }
+
+    for (let i = excess; i < totalFrames; i++) {
+      newHistory.push(this.state.frameHistory[i]);
+    }
+
+    this.state.frameHistory = newHistory;
+    this.cleanupEvictedFrameFacets(evictedFrames);
+    this.cleanupHistoricalCache();
+
+    console.log(`[VEILState] Trimmed ${evictedFrames.length} frames, protected ${protectedIndices.size} per-stream (retained ${this.state.frameHistory.length} frames, ${this.state.facets.size} facets, limit ${this.maxFrameHistory}, min/stream ${this.minFramesPerStream})`);
+  }
+
+  /**
+   * Fast-path eviction: remove the oldest `count` frames with no per-stream protection.
+   */
+  private evictOldestFrames(count: number): void {
+    const evictedFrames = this.state.frameHistory.slice(0, count);
+    this.state.frameHistory = this.state.frameHistory.slice(count);
+
+    for (const frame of evictedFrames) {
+      this.untrackFrameForStreamCounts(frame);
+    }
+
+    this.cleanupEvictedFrameFacets(evictedFrames);
+    this.cleanupHistoricalCache();
+
+    const cleanedFacets = 0; // logged inside cleanupEvictedFrameFacets
+    console.log(`[VEILState] Trimmed ${count} frames (retained ${this.state.frameHistory.length} frames, ${this.state.facets.size} facets, limit ${this.maxFrameHistory})`);
+  }
+
+  /**
+   * Clean up conversation facets introduced by evicted frames.
+   * Facets still referenced by retained frames are preserved.
+   */
+  private cleanupEvictedFrameFacets(evictedFrames: Frame[]): void {
     const evictedFacetIds = new Set<string>();
     for (const frame of evictedFrames) {
       for (const delta of frame.deltas || []) {
@@ -99,8 +287,6 @@ export class VEILStateManager {
       }
     }
 
-    // Collect facet IDs that are re-added or referenced by retained frames
-    // (a facet could be added in an evicted frame but rewritten in a retained one)
     const retainedFacetIds = new Set<string>();
     for (const frame of this.state.frameHistory) {
       for (const delta of frame.deltas || []) {
@@ -112,36 +298,30 @@ export class VEILStateManager {
       }
     }
 
-    // Delete conversation facets from evicted frames (skip state/ambient/config)
-    let cleanedFacets = 0;
     for (const facetId of evictedFacetIds) {
       if (retainedFacetIds.has(facetId)) continue;
-
       const facet = this.state.facets.get(facetId);
       if (!facet) continue;
-
-      // Only clean up conversation-bound facets — state/ambient/config persist
       if (!VEILStateManager.CONVERSATION_FACET_TYPES.has(facet.type)) continue;
-
       this.state.facets.delete(facetId);
       this.state.currentStateCache.delete(facetId);
       this.state.removals.delete(facetId);
-      cleanedFacets++;
     }
+  }
 
-    // Clean up historicalStateCache for evicted sequences
-    if (this.historicalStateCache.size > 0) {
-      const minRetainedSequence = this.state.frameHistory.length > 0
-        ? this.state.frameHistory[0].sequence
-        : Infinity;
-      for (const seq of this.historicalStateCache.keys()) {
-        if (seq < minRetainedSequence) {
-          this.historicalStateCache.delete(seq);
-        }
+  /**
+   * Clean up historicalStateCache for sequences no longer in frame history.
+   */
+  private cleanupHistoricalCache(): void {
+    if (this.historicalStateCache.size === 0) return;
+    const minRetainedSequence = this.state.frameHistory.length > 0
+      ? this.state.frameHistory[0].sequence
+      : Infinity;
+    for (const seq of this.historicalStateCache.keys()) {
+      if (seq < minRetainedSequence) {
+        this.historicalStateCache.delete(seq);
       }
     }
-
-    console.log(`[VEILState] Trimmed ${excess} frames, cleaned ${cleanedFacets} facets (retained ${this.state.frameHistory.length} frames, ${this.state.facets.size} facets, limit ${this.maxFrameHistory})`);
   }
 
   /**
@@ -297,6 +477,7 @@ export class VEILStateManager {
     // Update state
     this.state.frameHistory.push(frame);
     this.state.currentSequence = frame.sequence;
+    this.trackFrameForStreamCounts(frame);
     this.trimFrameHistory();
 
     // Remove ephemeral facets at end of frame (unless skipped)
@@ -324,7 +505,7 @@ export class VEILStateManager {
 
     return changes;
   }
-  
+
   /**
    * Apply deltas directly to state without creating a frame
    * Used during component execution where changes should be immediately visible
@@ -372,6 +553,7 @@ export class VEILStateManager {
     // Update state
     this.state.frameHistory.push(frame);
     this.state.currentSequence = frame.sequence;
+    this.trackFrameForStreamCounts(frame);
     this.trimFrameHistory();
 
     // Remove ephemeral facets at end of frame (unless skipped)

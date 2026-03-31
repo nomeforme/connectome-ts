@@ -14,6 +14,8 @@ export interface FrameBucketRef {
   startSequence: number;
   endSequence: number;
   frameCount: number;
+  /** Unique stream IDs with message-bearing frames in this bucket (added for per-stream retention) */
+  streamIds?: string[];
 }
 
 /**

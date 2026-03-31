@@ -27,6 +27,7 @@ interface GrpcConfig {
   persistenceDir: string;
   snapshotInterval: number;
   maxFrameHistory: number;
+  minFramesPerStream: number;
   debugEnabled: boolean;
   debugPort: number;
   reset: boolean;
@@ -43,6 +44,7 @@ function loadConfig(): GrpcConfig {
     persistenceDir: process.env.PERSISTENCE_DIR || './connectome-state',
     snapshotInterval: parseInt(process.env.SNAPSHOT_INTERVAL || '1000'),
     maxFrameHistory: parseInt(process.env.MAX_FRAME_HISTORY || '50000'),
+    minFramesPerStream: parseInt(process.env.MIN_FRAMES_PER_STREAM || '30'),
     debugEnabled: process.env.DEBUG_ENABLED === 'true',
     debugPort: parseInt(process.env.DEBUG_PORT || '3015'),
     reset: process.argv.includes('--reset')
@@ -116,7 +118,7 @@ async function main(): Promise<void> {
   console.log(`  gRPC Port:     ${config.grpcPort}`);
   console.log(`  gRPC Host:     ${config.grpcHost}`);
   console.log(`  Persistence:   ${config.persistenceEnabled ? config.persistenceDir : 'disabled'}`);
-  console.log(`  Frame history: ${config.maxFrameHistory} frames`);
+  console.log(`  Frame history: ${config.maxFrameHistory} frames (min ${config.minFramesPerStream}/stream)`);
   console.log(`  Debug UI:      ${config.debugEnabled ? `http://localhost:${config.debugPort}` : 'disabled'}`);
   console.log(`  Reset:         ${config.reset}`);
   console.log();
@@ -129,7 +131,8 @@ async function main(): Promise<void> {
       enabled: config.persistenceEnabled,
       storageDir: config.persistenceDir,
       snapshotInterval: config.snapshotInterval,
-      maxFrameHistory: config.maxFrameHistory
+      maxFrameHistory: config.maxFrameHistory,
+      minFramesPerStream: config.minFramesPerStream
     },
     debug: {
       enabled: config.debugEnabled,

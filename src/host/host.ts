@@ -23,6 +23,7 @@ export interface HostConfig {
     storageDir?: string;
     snapshotInterval?: number;  // Frames between snapshots (default: 100)
     maxFrameHistory?: number;   // Max frames kept in memory (default: 2000)
+    minFramesPerStream?: number; // Minimum conversation frames retained per stream (default: 30)
   };
   debug?: {
     enabled: boolean;
@@ -168,8 +169,10 @@ export class ConnectomeHost {
         this.config.persistence.storageDir || './connectome-state'
       );
 
-      // Apply frame history limit
+      // Apply frame history limit and per-stream minimum retention
       const maxFrameHistory = this.config.persistence.maxFrameHistory ?? 2000;
+      const minFramesPerStream = this.config.persistence.minFramesPerStream ?? 30;
+      veilState.setMinFramesPerStream(minFramesPerStream);
       veilState.setMaxFrameHistory(maxFrameHistory);
 
       // Mount persistence maintainer (auto-registration handles the rest!)
@@ -294,10 +297,11 @@ export class ConnectomeHost {
     // Extend frame history from older snapshots before restoration
     if (this.config.persistence?.enabled && this.storageAdapter) {
       const maxFrameHistory = this.config.persistence.maxFrameHistory ?? 2000;
+      const minFramesPerStream = this.config.persistence.minFramesPerStream ?? 30;
       const currentFrameCount = snapshot.veilState?.frameHistory?.length || 0;
       if (currentFrameCount < maxFrameHistory) {
         console.log(`[Host.restore] Snapshot has ${currentFrameCount} frames, loading full history from all snapshots...`);
-        const fullHistory = await this.storageAdapter.loadFullFrameHistory(maxFrameHistory);
+        const fullHistory = await this.storageAdapter.loadFullFrameHistory(maxFrameHistory, minFramesPerStream);
         if (fullHistory.length > currentFrameCount) {
           snapshot.veilState.frameHistory = fullHistory;
           console.log(`[Host.restore] Extended frame history: ${currentFrameCount} → ${fullHistory.length} frames`);
@@ -380,6 +384,9 @@ export class ConnectomeHost {
     // Apply frame history limit after restore + delta replay to trim excess frames
     if (this.config.persistence?.enabled) {
       const maxFrameHistory = this.config.persistence.maxFrameHistory ?? 2000;
+      const minFramesPerStream = this.config.persistence.minFramesPerStream ?? 30;
+      veilState.setMinFramesPerStream(minFramesPerStream);
+      veilState.rebuildStreamConversationCounts();
       veilState.setMaxFrameHistory(maxFrameHistory);
       // Clean up orphaned conversation facets from before facet-cleanup-on-trim existed
       veilState.purgeOrphanedFacets();
