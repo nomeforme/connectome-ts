@@ -201,6 +201,29 @@ export class EventHandler {
       }
     }
 
+    // Handle web:message events - create message facet via applyFrame (same pattern as discord/signal)
+    if (event.topic === 'web:message') {
+      const facetId = `msg-web-${eventId}`;
+      const webStream = streamId ? { streamId, streamType: 'web' } : undefined;
+      const facet: Facet & { streamId?: string; state?: any } = {
+        type: 'event',
+        id: facetId,
+        content: `<${payload.authorName || 'unknown'}> ${payload.content || ''}`,
+        streamId,
+        state: {
+          eventType: 'web:message',
+          source: 'web',
+          authorId: payload.authorId,
+          authorName: payload.authorName,
+          timestamp: payload.timestamp || Date.now(),
+        }
+      };
+
+      const deltas = [{ type: 'addFacet' as const, facet }];
+      this.safeApplyFrame(veilState, `msg-${eventId}`, deltas, webStream);
+      console.log(`[EventHandler] Created web message facet (frame ${veilState.getCurrentSequence()}) for ${payload.authorName}: ${(payload.content || '').substring(0, 50)}...`);
+    }
+
     // Handle bot:config events - create ephemeral bot-config facet so bot-runtime subscribers are notified
     if (event.topic === 'bot:config') {
       const targetAgent = payload.targetAgent;
