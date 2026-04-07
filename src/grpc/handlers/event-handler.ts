@@ -224,6 +224,23 @@ export class EventHandler {
       console.log(`[EventHandler] Created web message facet (frame ${veilState.getCurrentSequence()}) for ${payload.authorName}: ${(payload.content || '').substring(0, 50)}...`);
     }
 
+    // Handle veil:ambient events - create ambient facets with optional agent targeting
+    if (event.topic === 'veil:ambient') {
+      const facetId = `ambient-${payload.targetAgentId || 'all'}-${payload.streamId || 'global'}-${Date.now()}`;
+      const ambientStream = streamId ? { streamId, streamType: 'web' } : undefined;
+      const facet: Facet & { streamId?: string; targetAgentId?: string } = {
+        type: 'ambient',
+        id: facetId,
+        content: payload.content || '',
+        streamId,
+        ...(payload.targetAgentId ? { targetAgentId: payload.targetAgentId } : {}),
+      };
+
+      const deltas = [{ type: 'addFacet' as const, facet }];
+      this.safeApplyFrame(veilState, `ambient-${eventId}`, deltas, ambientStream);
+      console.log(`[EventHandler] Created ambient facet ${facetId} (frame ${veilState.getCurrentSequence()})${payload.targetAgentId ? ` target=${payload.targetAgentId}` : ''}`);
+    }
+
     // Handle bot:config events - create ephemeral bot-config facet so bot-runtime subscribers are notified
     if (event.topic === 'bot:config') {
       const targetAgent = payload.targetAgent;

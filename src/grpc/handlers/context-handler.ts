@@ -356,11 +356,18 @@ export class ContextHandler {
           continue;
         }
 
+        // Filter ambient facets by target agent — only include if untargeted or targeting this agent
+        if (facet.type === 'ambient' && (facet as any).targetAgentId) {
+          if ((facet as any).targetAgentId !== agentId && (facet as any).targetAgentId !== agentName) {
+            continue;
+          }
+        }
+
         // Add to state section
         context.state[id] = {
           type: facet.type,
           content: (facet as any).content,
-          state: (facet as any).state
+          state: (facet as any).state,
         };
       }
     }
