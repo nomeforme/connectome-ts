@@ -197,8 +197,12 @@ export class VEILStateManager {
       }
     }
 
-    // Hard cap: 1.5x maxFrameHistory — prevent unbounded growth from many streams
-    const hardCap = Math.floor(this.maxFrameHistory * 1.5);
+    // Hard cap: 1.1x maxFrameHistory — tight ceiling that prevents per-stream
+    // protection from inflating state.facets past the gRPC 64 MB frame limit.
+    // Previously 1.5x; tightened after 428 MB get_streams incident where
+    // protected frames across 100+ streams (with heavy attachment-bearing
+    // facets) pushed the total live facet set past the wire limit.
+    const hardCap = Math.floor(this.maxFrameHistory * 1.1);
     const projectedSize = totalFrames - excess + protectedIndices.size;
 
     if (projectedSize > hardCap) {

@@ -43,8 +43,13 @@ function loadConfig(): GrpcConfig {
     persistenceEnabled: process.env.PERSISTENCE_ENABLED !== 'false',
     persistenceDir: process.env.PERSISTENCE_DIR || './connectome-state',
     snapshotInterval: parseInt(process.env.SNAPSHOT_INTERVAL || '1000'),
+    // 50k global frames stays as the cap, but per-stream protection drops
+    // from 30 → 5. With 100+ streams (many idle), protecting 30 message
+    // frames each kept state.facets inflated past the gRPC 64 MB frame limit
+    // (see "428 MB get_streams" incident). 5 messages still gives meaningful
+    // per-stream tail for context backfill without an unbounded protected set.
     maxFrameHistory: parseInt(process.env.MAX_FRAME_HISTORY || '50000'),
-    minFramesPerStream: parseInt(process.env.MIN_FRAMES_PER_STREAM || '30'),
+    minFramesPerStream: parseInt(process.env.MIN_FRAMES_PER_STREAM || '5'),
     debugEnabled: process.env.DEBUG_ENABLED === 'true',
     debugPort: parseInt(process.env.DEBUG_PORT || '3015'),
     reset: process.argv.includes('--reset')
