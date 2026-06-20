@@ -9,6 +9,7 @@ export * from './serialization';
 export * from './persistence-maintainer';
 export * from './file-storage';
 export * from './blob-store';
+export * from './blob-migrator';
 export * from './restoration';
 export * from './transition-manager';
 export * from './transition-maintainer';
