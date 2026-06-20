@@ -8,6 +8,7 @@ export * from './serialization';
 // PersistenceManager removed - use PersistenceMaintainer instead
 export * from './persistence-maintainer';
 export * from './file-storage';
+export * from './blob-store';
 export * from './restoration';
 export * from './transition-manager';
 export * from './transition-maintainer';

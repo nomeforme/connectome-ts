@@ -16,6 +16,7 @@ import { VEILStateManager } from './veil/veil-state.js';
 import { startGrpcServer } from './grpc/server.js';
 import type { ConnectomeApplication } from './host/types.js';
 import { ComponentRegistry } from './persistence/component-registry.js';
+import { BlobStore } from './persistence/blob-store.js';
 
 /**
  * Configuration from environment variables
@@ -187,13 +188,21 @@ async function main(): Promise<void> {
     console.log('Starting Connectome host...');
     space = await host.start(app);
 
+    // Initialize the content-addressed blob store (lives parallel to snapshots
+    // and frame buckets under the persistence dir). Bytes never travel
+    // through the frame log; only sha256 refs do.
+    const blobStore = new BlobStore({ basePath: config.persistenceDir });
+    await blobStore.initialize();
+    console.log(`  Blob store:    ${config.persistenceDir}/blobs`);
+
     // Start gRPC server
     console.log('Starting gRPC server...');
     grpcServer = await startGrpcServer({
       port: config.grpcPort,
       host: config.grpcHost,
       space,
-      veilState: space.getVEILState()
+      veilState: space.getVEILState(),
+      blobStore
     });
 
     console.log();

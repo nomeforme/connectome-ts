@@ -10,6 +10,7 @@ import { EventHandler } from './handlers/event-handler.js';
 import { SubscriptionHandler } from './handlers/subscription-handler.js';
 import { ContextHandler } from './handlers/context-handler.js';
 import { createDefaultTransition } from '../veil/types.js';
+import { BlobStore } from '../persistence/blob-store.js';
 
 /**
  * gRPC server configuration with Space integration
@@ -17,6 +18,8 @@ import { createDefaultTransition } from '../veil/types.js';
 export interface GrpcServerOptions extends ConnectomeServerConfig {
   space: Space;
   veilState: VEILStateManager;
+  /** Optional pre-constructed blob store; if omitted, PutBlob/GetBlob return UNIMPLEMENTED */
+  blobStore?: BlobStore;
 }
 
 /**
@@ -28,7 +31,7 @@ let serverStartTime: number = 0;
  * Create and configure the gRPC server with Connectome handlers
  */
 export function createGrpcServer(options: GrpcServerOptions): ConnectomeServer {
-  const { space, veilState, ...serverConfig } = options;
+  const { space, veilState, blobStore, ...serverConfig } = options;
 
   const server = new ConnectomeServer(serverConfig);
 
@@ -354,6 +357,26 @@ export function createGrpcServer(options: GrpcServerOptions): ConnectomeServer {
         success: true,
         activationId
       };
+    },
+
+    // Upload a blob to the content-addressed store
+    async putBlob(header, bytes) {
+      if (!blobStore) {
+        throw new Error('Blob store not configured on this server');
+      }
+      const result = await blobStore.putBlob(bytes, {
+        contentType: header.contentType,
+        filename: header.filename
+      });
+      return result;
+    },
+
+    // Retrieve a blob from the content-addressed store
+    async getBlob(request) {
+      if (!blobStore) {
+        throw new Error('Blob store not configured on this server');
+      }
+      return blobStore.getBlob(request.blobId);
     }
   };
 
