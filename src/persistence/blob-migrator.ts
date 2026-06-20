@@ -150,8 +150,13 @@ export class BlobMigrator {
     startedAt: 0,
   };
 
-  /** Per-call dedup cache so the same blob isn't decoded twice in one run. */
-  private blobCache = new Map<string, string>();  // base64-substring → blobId
+  /**
+   * Per-call dedup cache so the same blob isn't re-uploaded twice in one run.
+   * Keyed by FULL sha256 of the bytes — anything shorter risks collisions
+   * (e.g. two different mp4s of the same length sharing identical 4KB headers)
+   * which would silently produce a wrong blobId for the second occurrence.
+   */
+  private blobCache = new Map<string, string>();  // sha256 → blobId
 
   /** Naive rate limiter state. */
   private opsThisSecond = 0;
@@ -513,10 +518,13 @@ export class BlobMigrator {
           if (!bytes) continue;
           if (bytes.length === 0) continue;
 
-          // Cache key: use a short prefix of base64 + length so duplicate detection
-          // works without rehashing the whole payload on every walk. Real dedup
-          // happens server-side via sha. This is just a hot cache.
-          const cacheKey = `${bytes.length}:${this.shortHash(bytes)}`;
+          // Cache key MUST be the full sha256 — anything shorter (or sampled)
+          // collides on identical-prefix payloads (mp4 headers, jpeg markers,
+          // etc.), silently aliasing the wrong blobId onto a different blob.
+          // Computing sha256 here mirrors what the server's BlobStore does;
+          // the cost is bounded (~hundreds of MB/sec) and dwarfed by the
+          // network round-trip we're trying to avoid.
+          const cacheKey = crypto.createHash('sha256').update(bytes).digest('hex');
 
           work.push({ attachment: att, bytes, byteLen: bytes.length, cacheKey });
         }
@@ -567,18 +575,6 @@ export class BlobMigrator {
       }
     }
     return null;
-  }
-
-  private shortHash(bytes: Uint8Array): string {
-    // 8-byte FNV-style hash — fast, just for in-memory cache dedup
-    let h = 0xcbf29ce484222325n;
-    const prime = 0x100000001b3n;
-    const sample = bytes.length > 4096 ? bytes.subarray(0, 4096) : bytes;
-    for (let i = 0; i < sample.length; i++) {
-      h ^= BigInt(sample[i]);
-      h = (h * prime) & 0xffffffffffffffffn;
-    }
-    return h.toString(16);
   }
 
   private fingerprint(t: MigrationTarget): string {
