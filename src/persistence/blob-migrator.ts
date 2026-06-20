@@ -51,11 +51,33 @@ export interface BlobMigratorOptions {
     alreadyExisted: boolean;
   }>;
 
+  /**
+   * Function that downloads bytes for a blob id. Required when `verify` is on.
+   * Typically `(id) => client.getBlob(id).then(r => r.bytes)`.
+   */
+  getBlob?: (blobId: string) => Promise<Uint8Array>;
+
   /** Optional logger sink. Defaults to console. */
   log?: (line: string) => void;
 
   /** When true, scan and report but never write or upload. Default false. */
   dryRun?: boolean;
+
+  /**
+   * When true (default), after each file rewrite, rehydrate the result by
+   * fetching every blob ref back from the store and deep-equal compare
+   * against the in-memory original. If they diverge, the rewrite is aborted
+   * — the on-disk file is left untouched and the failure is logged.
+   *
+   * This is the strongest possible content-equivalence guarantee: every byte
+   * recoverable from the original must be recoverable from (new file + store).
+   *
+   * Requires `getBlob` to be supplied. Adds ~one GetBlob round-trip per
+   * unique attachment per file (cached per-call), so the cost is bounded.
+   *
+   * Default: true.
+   */
+  verify?: boolean;
 
   /** Optional cap on the number of PutBlob calls per second (rough throttle). */
   rateLimitOpsPerSec?: number;
@@ -75,6 +97,7 @@ export interface MigrationStats {
   filesRewritten: number;
   filesSkipped: number;
   filesFailed: number;
+  filesVerifyFailed: number;    // verify mode caught divergence; rewrite aborted
   inlineAttachmentsFound: number;
   blobsUploaded: number;        // count where alreadyExisted=false
   blobsDeduped: number;         // count where alreadyExisted=true
@@ -110,6 +133,7 @@ export class BlobMigrator {
     Partial<BlobMigratorOptions>;
   private readonly log: (line: string) => void;
   private readonly dryRun: boolean;
+  private readonly verify: boolean;
   private readonly progressPath: string;
 
   private stats: MigrationStats = {
@@ -117,6 +141,7 @@ export class BlobMigrator {
     filesRewritten: 0,
     filesSkipped: 0,
     filesFailed: 0,
+    filesVerifyFailed: 0,
     inlineAttachmentsFound: 0,
     blobsUploaded: 0,
     blobsDeduped: 0,
@@ -136,6 +161,10 @@ export class BlobMigrator {
     this.opts = options;
     this.log = options.log ?? ((s) => console.log(s));
     this.dryRun = options.dryRun ?? false;
+    this.verify = options.verify ?? true;  // default ON — strongest safety
+    if (this.verify && !this.dryRun && !options.getBlob) {
+      throw new Error('BlobMigrator: verify=true requires a getBlob fetcher');
+    }
     this.progressPath = path.join(options.basePath, 'migration-progress.json');
   }
 
@@ -193,7 +222,14 @@ export class BlobMigrator {
 
   /**
    * Migrate a single file. Returns true if file was rewritten, false if
-   * already-clean (no inline data) or dry-run skipped.
+   * already-clean (no inline data) or dry-run skipped or verify failed.
+   *
+   * With verify=true (default), every rewrite is content-equivalence-checked
+   * before commit: the migrated tree is rehydrated by fetching each blob
+   * back from the store, deep-equal-compared against the original parsed
+   * object, and only then atomically renamed into place. A verify miss
+   * aborts the rewrite (file left untouched) and is counted in
+   * stats.filesVerifyFailed for visibility.
    */
   async migrateFile(target: MigrationTarget): Promise<boolean> {
     this.stats.filesScanned++;
@@ -204,6 +240,13 @@ export class BlobMigrator {
     } catch (err: any) {
       throw new Error(`JSON parse failed: ${err.message}`);
     }
+
+    // Capture a deep clone of the original BEFORE we mutate, for verify-mode
+    // comparison. JSON parse-of-stringify is the easiest deep clone here and
+    // matches the semantic-equality we care about (vs identity).
+    const originalForVerify = this.verify && !this.dryRun
+      ? JSON.parse(JSON.stringify(parsed))
+      : null;
 
     // Walk + collect work units (don't mutate yet — keep dry-run honest)
     const workUnits = this.findInlineAttachments(parsed);
@@ -246,13 +289,22 @@ export class BlobMigrator {
       }
       this.stats.bytesProcessed += w.byteLen;
 
-      // Rewrite the attachment in place: drop `data` / `inlineData`, set `blobId`
+      // Rewrite the attachment in place: drop `data` / `inlineData`, set `blobId`.
+      // Do NOT add fields that weren't there (e.g. sizeBytes) — strict content
+      // equivalence with the original (modulo bytes ↔ blobId) is the invariant.
       delete w.attachment.data;
       delete w.attachment.inlineData;
       w.attachment.blobId = blobId;
-      // Preserve sizeBytes if missing (decoder may need it)
-      if (w.attachment.sizeBytes == null) {
-        w.attachment.sizeBytes = w.byteLen;
+    }
+
+    // Verify content-equivalence BEFORE writing. If this fails, we leave the
+    // original file untouched and don't count it as rewritten.
+    if (this.verify) {
+      const ok = await this.verifyEquivalence(parsed, originalForVerify);
+      if (!ok) {
+        this.stats.filesVerifyFailed++;
+        this.log(`[BlobMigrator] VERIFY FAILED — left ${path.basename(target.path)} untouched`);
+        return false;
       }
     }
 
@@ -275,6 +327,82 @@ export class BlobMigrator {
   /** Final stats so far (also returned by migrateAll). */
   getStats(): MigrationStats {
     return { ...this.stats };
+  }
+
+  /**
+   * Content-equivalence check: hydrate every blobId in `migrated` back to its
+   * raw bytes via getBlob, then deep-equal the resulting tree against
+   * `original`. Returns true if they match exactly.
+   *
+   * Caches blob fetches per-call so a file with N references to the same blob
+   * only does one round-trip. The `original` snapshot still has `data` (string
+   * base64), so we hydrate the migrated copy to the same base64 string form
+   * to allow direct comparison.
+   */
+  private async verifyEquivalence(migrated: any, original: any): Promise<boolean> {
+    if (!this.opts.getBlob) return false;
+
+    const fetchCache = new Map<string, string>();  // blobId → base64
+
+    const hydrate = async (node: any): Promise<void> => {
+      if (node === null || typeof node !== 'object') return;
+      if (Array.isArray(node)) {
+        for (const item of node) await hydrate(item);
+        return;
+      }
+      const atts = (node as any).attachments;
+      if (Array.isArray(atts)) {
+        for (const att of atts) {
+          if (att == null || typeof att !== 'object') continue;
+          if (!att.blobId) continue;
+          let b64 = fetchCache.get(att.blobId);
+          if (!b64) {
+            const bytes = await this.opts.getBlob!(att.blobId);
+            b64 = Buffer.from(bytes).toString('base64');
+            fetchCache.set(att.blobId, b64);
+          }
+          // Replace blobId back to data — matches the original's shape
+          att.data = b64;
+          delete att.blobId;
+        }
+      }
+      for (const k of Object.keys(node)) await hydrate(node[k]);
+    };
+
+    // Hydrate a clone of migrated so we don't mutate the about-to-be-written copy
+    const rehydrated = JSON.parse(JSON.stringify(migrated));
+    await hydrate(rehydrated);
+
+    return this.deepEqual(rehydrated, original);
+  }
+
+  /**
+   * Recursive deep equality for plain JSON values.
+   * Order-sensitive for arrays; key-order-insensitive for objects.
+   */
+  private deepEqual(a: any, b: any): boolean {
+    if (a === b) return true;
+    if (a === null || b === null) return false;
+    if (typeof a !== typeof b) return false;
+    if (typeof a !== 'object') return false;
+
+    if (Array.isArray(a)) {
+      if (!Array.isArray(b) || a.length !== b.length) return false;
+      for (let i = 0; i < a.length; i++) {
+        if (!this.deepEqual(a[i], b[i])) return false;
+      }
+      return true;
+    }
+    if (Array.isArray(b)) return false;
+
+    const ka = Object.keys(a);
+    const kb = Object.keys(b);
+    if (ka.length !== kb.length) return false;
+    for (const k of ka) {
+      if (!Object.prototype.hasOwnProperty.call(b, k)) return false;
+      if (!this.deepEqual(a[k], b[k])) return false;
+    }
+    return true;
   }
 
   // ---------------------------------------------------------------------------

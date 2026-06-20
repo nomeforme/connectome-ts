@@ -30,6 +30,7 @@ interface Args {
   grpcHost: string;
   grpcPort: number;
   dryRun: boolean;
+  noVerify: boolean;
   rateLimit?: number;
   limitFiles?: number;
   filter?: string;
@@ -43,6 +44,7 @@ function parseArgs(): Args {
     grpcHost: 'localhost',
     grpcPort: 50051,
     dryRun: false,
+    noVerify: false,
     resetProgress: false,
   };
 
@@ -54,6 +56,7 @@ function parseArgs(): Args {
       case '--grpc-host':       a.grpcHost = v;            i++; break;
       case '--grpc-port':       a.grpcPort = parseInt(v);  i++; break;
       case '--dry-run':         a.dryRun = true;                break;
+      case '--no-verify':       a.noVerify = true;              break;
       case '--rate-limit':      a.rateLimit = parseInt(v); i++; break;
       case '--limit-files':     a.limitFiles = parseInt(v); i++; break;
       case '--filter':          a.filter = v;              i++; break;
@@ -80,6 +83,8 @@ Flags:
   --grpc-host <host>     Connectome host (default: localhost)
   --grpc-port <port>     Connectome port (default: 50051)
   --dry-run              Scan + report only; no uploads, no writes
+  --no-verify            Skip rehydrate-and-deep-equal verify per file
+                         (default: verify is ON; recommended to leave on)
   --rate-limit <N>       Cap PutBlob calls/sec (default: unlimited)
   --limit-files <N>      Stop after migrating N files (smoke-test mode)
   --filter <substring>   Only process files whose path contains this
@@ -107,6 +112,7 @@ async function main(): Promise<void> {
   console.log(`State dir:   ${args.stateDir}`);
   console.log(`Connectome:  ${args.grpcHost}:${args.grpcPort}`);
   console.log(`Mode:        ${args.dryRun ? 'DRY RUN (no writes)' : 'LIVE'}`);
+  console.log(`Verify:      ${args.dryRun ? 'n/a' : (args.noVerify ? 'OFF (no equivalence check)' : 'ON (rehydrate + deep-equal)')}`);
   if (args.rateLimit) console.log(`Rate limit:  ${args.rateLimit} ops/sec`);
   if (args.limitFiles) console.log(`Limit:       first ${args.limitFiles} files only`);
   if (args.filter) console.log(`Filter:      ${args.filter}`);
@@ -136,7 +142,9 @@ async function main(): Promise<void> {
   const migrator = new BlobMigrator({
     basePath: args.stateDir,
     putBlob: client.putBlob.bind(client),
+    getBlob: async (id: string) => (await client.getBlob(id)).bytes,
     dryRun: args.dryRun,
+    verify: !args.noVerify,
     rateLimitOpsPerSec: args.rateLimit,
     limitFiles: args.limitFiles,
     filter: args.filter,
@@ -159,6 +167,7 @@ async function main(): Promise<void> {
   console.log(`Files rewritten:             ${stats.filesRewritten}`);
   console.log(`Files skipped (already done): ${stats.filesSkipped}`);
   console.log(`Files failed:                ${stats.filesFailed}`);
+  console.log(`Files verify-failed:         ${stats.filesVerifyFailed}`);
   console.log(`Inline attachments found:    ${stats.inlineAttachmentsFound}`);
   console.log(`Blobs uploaded fresh:        ${stats.blobsUploaded}`);
   console.log(`Blobs dedup hits:            ${stats.blobsDeduped}`);
