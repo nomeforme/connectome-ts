@@ -195,6 +195,15 @@ export class ContextHandler {
       if (addedFacetIds.has(facet.id)) return;
       addedFacetIds.add(facet.id);
 
+      // Redaction: `🫥` reactions set `state.hiddenFromContext=true` on the
+      // target message facet. Skip silently — the LLM must have no signal
+      // that a message was ever there. Facet remains in VEIL storage,
+      // snapshots, and search results; this filter only affects the
+      // conversation passed to the bot for inference.
+      if (facet.state?.hiddenFromContext === true) {
+        return;
+      }
+
       // Filter by type if specified
       if (facetTypes.length > 0 && !facetTypes.includes(facet.type)) {
         return;
@@ -388,6 +397,9 @@ export class ContextHandler {
    * so agents have peripheral awareness of cross-stream activity.
    */
   private renderFacetUnfocused(facet: any): string | null {
+    // Redaction — same rule as the focused path.
+    if (facet.state?.hiddenFromContext === true) return null;
+
     const streamId = facet.streamId || 'unknown';
     const facetType = facet.type || 'unknown';
 

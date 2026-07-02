@@ -203,7 +203,11 @@ export class EventHandler {
 
     // Handle web:message events - create message facet via applyFrame (same pattern as discord/signal)
     if (event.topic === 'web:message') {
-      const facetId = `msg-web-${eventId}`;
+      // Client-provided messageId gets a deterministic facet ID so reactions
+      // (and other future targeting) can reference it. Absent messageId falls
+      // back to the server-generated eventId (non-deterministic — client can't
+      // address it later).
+      const facetId = payload.messageId ? `msg-web-${payload.messageId}` : `msg-web-${eventId}`;
       const webStream = streamId ? { streamId, streamType: 'web' } : undefined;
       const facet: Facet & { streamId?: string; state?: any } = {
         type: 'event',
@@ -215,6 +219,7 @@ export class EventHandler {
           source: 'web',
           authorId: payload.authorId,
           authorName: payload.authorName,
+          messageId: payload.messageId,
           timestamp: payload.timestamp || Date.now(),
         }
       };
@@ -313,6 +318,98 @@ export class EventHandler {
       const grpcStream = streamId ? { streamId, streamType: 'grpc' } : undefined;
       this.safeApplyFrame(veilState, `speech-${eventId}`, deltas, grpcStream);
       console.log(`[EventHandler] Created speech facet (frame ${veilState.getCurrentSequence()}) for ${payload.agentName}: ${(payload.content || '').substring(0, 50)}...`);
+    }
+
+    // Handle <platform>:reaction events.
+    //
+    // Currently a single-purpose channel: `🫥` (U+1FAE5, "dotted-line-face")
+    // hides the target message from LLM context. All other emojis are ignored.
+    //
+    // Semantics: state-based. If ANY user has 🫥 on the message at the moment
+    // context is rendered, it's hidden. Set of reactors tracked so add/remove
+    // by different users behaves naturally (any-present = hidden).
+    //
+    // The target message facet stays in VEIL — hidden only affects LLM inference,
+    // not storage, search, or delivery. Snapshots contain everything.
+    if (
+      event.topic === 'discord:reaction'
+      || event.topic === 'signal:reaction'
+      || event.topic === 'web:reaction'
+    ) {
+      const HIDE_EMOJI = '🫥';
+      const emoji = payload.emoji;
+      if (emoji !== HIDE_EMOJI) {
+        // Not our concern — future reactions can hook here.
+        return;
+      }
+
+      // Resolve the deterministic facet ID for the target message. Must
+      // match the ID scheme used at message-create time (see above branches).
+      let facetId: string | null = null;
+      if (event.topic === 'discord:reaction' && payload.messageId) {
+        facetId = `msg-discord-${payload.messageId}`;
+      } else if (event.topic === 'signal:reaction' && payload.targetAuthorId && payload.targetTimestamp) {
+        facetId = `msg-signal-${payload.targetAuthorId}-${payload.targetTimestamp}`;
+      } else if (event.topic === 'web:reaction' && payload.facetId) {
+        // Web clients pass the facet ID directly (surfaced back to them at
+        // message-emit time — see web-axon grpc-main.ts).
+        facetId = payload.facetId;
+      }
+
+      if (!facetId) {
+        console.log(`[EventHandler] ${event.topic}: missing target key, skipping. payload keys=${Object.keys(payload).join(',')}`);
+        return;
+      }
+
+      const existingFacet: any = veilState.getState().facets.get(facetId);
+      if (!existingFacet) {
+        console.log(`[EventHandler] ${event.topic} 🫥: target facet ${facetId} not found, skipping`);
+        return;
+      }
+
+      const userId = payload.userId || 'anon';
+      const added = payload.added !== false; // Default to true if unspecified.
+
+      // Track the set of users currently holding 🫥 on this message.
+      // Serialized as an array for JSON-friendliness in facet state.
+      const existingReactors: string[] = existingFacet.state?.hiddenReactors ?? [];
+      let nextReactors: string[];
+      if (added) {
+        nextReactors = existingReactors.includes(userId)
+          ? existingReactors
+          : [...existingReactors, userId];
+      } else {
+        nextReactors = existingReactors.filter((u: string) => u !== userId);
+      }
+
+      const nextHidden = nextReactors.length > 0;
+
+      // If nothing changed (idempotent), still emit? No — skip to avoid frame noise.
+      if (
+        existingReactors.length === nextReactors.length
+        && (existingFacet.state?.hiddenFromContext === true) === nextHidden
+      ) {
+        return;
+      }
+
+      // Merge into existing state — rewrite semantics on this codebase are
+      // full-replace for the `state` object, so preserve the other fields.
+      const mergedState = {
+        ...(existingFacet.state ?? {}),
+        hiddenFromContext: nextHidden,
+        hiddenReactors: nextReactors,
+      };
+
+      const deltas = [{
+        type: 'rewriteFacet' as const,
+        id: facetId,
+        changes: { state: mergedState },
+      }];
+      const grpcStream = streamId ? { streamId, streamType: 'grpc' } : undefined;
+      this.safeApplyFrame(veilState, `redact-${eventId}`, deltas, grpcStream);
+      console.log(
+        `[EventHandler] 🫥 ${added ? 'added' : 'removed'} on ${facetId} by ${userId} — reactors=${nextReactors.length}, hidden=${nextHidden}`,
+      );
     }
 
     } catch (error: any) {

@@ -1121,8 +1121,18 @@ export class FrameTrackingHUD implements CompressibleHUD {
   }
   
   private renderFacet(facet: Facet, renderMode: 'focused' | 'unfocused' = 'focused'): string | null {
+    // Redaction: `🫥` (dotted-line-face) reactions on Discord/Signal/Web set
+    // `state.hiddenFromContext: true` on the target message facet. Skip
+    // silently — no placeholder, no marker — so the model has no signal that
+    // a message was ever there. Facet remains in VEIL storage / snapshots;
+    // this filter only affects LLM context rendering.
+    const hiddenState = (facet as any).state?.hiddenFromContext;
+    if (hiddenState === true) {
+      return null;
+    }
+
     const tracer = getGlobalTracer();
-    
+
     const facetContent = hasContentAspect(facet) ? facet.content : undefined;
     const facetChildren = Array.isArray((facet as any)?.children)
       ? ((facet as any).children as Facet[])
