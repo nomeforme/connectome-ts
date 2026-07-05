@@ -37,8 +37,36 @@ export class EventHandler {
     eventId: string;
   }> = new Map();
 
+  /**
+   * Alias index for reactions on bot-authored messages.
+   *
+   * Bot speech lives in VEIL as `speech-<eventId>` facets, not as
+   * `msg-<platform>-<id>` facets — so a user reacting 🫥 to the bot's own
+   * Discord/Signal message can't be found via the primary lookup scheme.
+   *
+   * Speech effectors emit `agent:speech:delivered` after successful platform
+   * send, giving us `(platformKey → speech facetId)` pairs. Bounded to keep
+   * memory sane in long-running processes — bot-message hiding is only useful
+   * for recent messages anyway, and FIFO eviction naturally targets stale ones.
+   */
+  private speechAliasMap = new Map<string, string>();
+  private static readonly SPEECH_ALIAS_MAX = 10_000;
+
   constructor(space: Space) {
     this.space = space;
+  }
+
+  private rememberSpeechAlias(platformKey: string, facetId: string): void {
+    // Refresh insertion order so hot aliases stay resident.
+    if (this.speechAliasMap.has(platformKey)) {
+      this.speechAliasMap.delete(platformKey);
+    }
+    this.speechAliasMap.set(platformKey, facetId);
+    while (this.speechAliasMap.size > EventHandler.SPEECH_ALIAS_MAX) {
+      const oldestKey = this.speechAliasMap.keys().next().value;
+      if (oldestKey === undefined) break;
+      this.speechAliasMap.delete(oldestKey);
+    }
   }
 
   /**
@@ -320,6 +348,32 @@ export class EventHandler {
       console.log(`[EventHandler] Created speech facet (frame ${veilState.getCurrentSequence()}) for ${payload.agentName}: ${(payload.content || '').substring(0, 50)}...`);
     }
 
+    // Handle agent:speech:delivered — emitted by axon speech effectors after
+    // successful platform send. Registers an alias (`msg-<platform>-<key>` →
+    // `speech-<eventId>`) so a user reacting 🫥 to the bot's own message can
+    // find the speech facet via the standard `<platform>:reaction` handler.
+    //
+    // Payload shape (from discord-axon / signal-axon speech effectors):
+    //   { facetId, platform: 'discord', platformMessageId }        (Discord)
+    //   { facetId, platform: 'signal',  senderUuid, timestamp }    (Signal)
+    if (event.topic === 'agent:speech:delivered') {
+      const facetId = payload.facetId;
+      if (!facetId) return;
+      let aliasKey: string | null = null;
+      if (payload.platform === 'discord' && payload.platformMessageId) {
+        aliasKey = `msg-discord-${payload.platformMessageId}`;
+      } else if (payload.platform === 'signal' && payload.senderUuid && payload.timestamp) {
+        aliasKey = `msg-signal-${payload.senderUuid}-${payload.timestamp}`;
+      }
+      if (!aliasKey) {
+        console.log(`[EventHandler] agent:speech:delivered: missing key. payload=${JSON.stringify(payload)}`);
+        return;
+      }
+      this.rememberSpeechAlias(aliasKey, facetId);
+      console.log(`[EventHandler] speech alias registered ${aliasKey} → ${facetId}`);
+      return;
+    }
+
     // Handle <platform>:reaction events.
     //
     // Currently a single-purpose channel: `🫥` (U+1FAE5, "dotted-line-face")
@@ -361,9 +415,25 @@ export class EventHandler {
         return;
       }
 
-      const existingFacet: any = veilState.getState().facets.get(facetId);
+      let existingFacet: any = veilState.getState().facets.get(facetId);
+
+      // Bot-authored messages don't have `msg-<platform>-*` facets — they live
+      // as `speech-<eventId>`. If the primary lookup misses, consult the alias
+      // map populated by `agent:speech:delivered`.
       if (!existingFacet) {
-        console.log(`[EventHandler] ${event.topic} 🫥: target facet ${facetId} not found, skipping`);
+        const aliasedId = this.speechAliasMap.get(facetId);
+        if (aliasedId) {
+          const aliased = veilState.getState().facets.get(aliasedId);
+          if (aliased) {
+            existingFacet = aliased;
+            facetId = aliasedId;
+          }
+        }
+      }
+
+      if (!existingFacet) {
+        const knownAliases = [...this.speechAliasMap.keys()].slice(-5);
+        console.log(`[EventHandler] ${event.topic} 🫥: target facet ${facetId} not found. Recent aliases: ${JSON.stringify(knownAliases)}`);
         return;
       }
 
@@ -405,7 +475,18 @@ export class EventHandler {
         id: facetId,
         changes: { state: mergedState },
       }];
-      const grpcStream = streamId ? { streamId, streamType: 'grpc' } : undefined;
+      // Derive the frame's activeStream from the target facet, not the reaction
+      // payload. Some axons (Discord's `emitDiscordReaction` pre-fix) don't set
+      // a streamId on the payload; without an active stream the redaction frame
+      // gets classified as ambient and can be silently dropped in busy channels
+      // — which means the message stays visible to the LLM even though state
+      // was updated. Sourcing the stream from the target message co-locates the
+      // redaction frame with the message it redacts, so it always survives
+      // context assembly.
+      const targetStreamId = existingFacet.streamId || streamId;
+      const grpcStream = targetStreamId
+        ? { streamId: targetStreamId, streamType: 'grpc' }
+        : undefined;
       this.safeApplyFrame(veilState, `redact-${eventId}`, deltas, grpcStream);
       console.log(
         `[EventHandler] 🫥 ${added ? 'added' : 'removed'} on ${facetId} by ${userId} — reactors=${nextReactors.length}, hidden=${nextHidden}`,
