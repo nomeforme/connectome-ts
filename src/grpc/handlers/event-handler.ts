@@ -111,6 +111,16 @@ export class EventHandler {
     // the facet is recorded in frame deltas with activeStream set (enables stream hierarchy)
     if (event.topic === 'discord:message') {
       const facetId = payload.messageId ? `msg-discord-${payload.messageId}` : `msg-${eventId}`;
+
+      // Idempotency: multiple bots may emit the same Discord message when the
+      // receptor uses the "every targeted bot emits" strategy to guarantee a
+      // per-bot sequential emit→activate barrier. Skip creating a duplicate
+      // frame — the caller's waitForFrame promise still resolves via
+      // handleEmitEvent's setImmediate path, so their ordering holds.
+      if (payload.messageId && veilState.getState().facets.has(facetId)) {
+        return;
+      }
+
       const facet: Facet & { streamId?: string; state?: any } = {
         type: 'event',
         id: facetId,
@@ -169,6 +179,15 @@ export class EventHandler {
       const signalMsgKey = (payload.senderUuid || payload.senderNumber) && payload.timestamp
         ? `msg-signal-${payload.senderUuid || payload.senderNumber}-${payload.timestamp}`
         : `msg-${eventId}`;
+
+      // Idempotency: see discord:message note above. Multiple targeted bots may
+      // emit the same Signal group message to guarantee each bot's own
+      // sequential emit→activate ordering.
+      if ((payload.senderUuid || payload.senderNumber) && payload.timestamp
+          && veilState.getState().facets.has(signalMsgKey)) {
+        return;
+      }
+
       const facet: Facet & { streamId?: string; state?: any } = {
         type: 'event',
         id: signalMsgKey,
