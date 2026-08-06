@@ -26,6 +26,16 @@ export class FileStorageAdapter implements StorageAdapter {
   private deltaDir: string;
   private bucketStore: FrameBucketStore;
   private maxSnapshots: number;
+  /**
+   * Bucket-refs index: the union of every FrameBucketRef ever written, in one
+   * small file (~200 bytes/ref). Restore reads THIS instead of parsing every
+   * snapshot on disk for refs — the old scan read the full snapshot corpus
+   * (tens of GB) just to extract a few MB of refs and dominated boot time.
+   * Self-healing: missing/corrupt index → one legacy scan rebuilds it.
+   */
+  private refsIndexPath: string;
+  /** Serializes read-modify-write cycles on the refs index. */
+  private refsIndexLock: Promise<void> = Promise.resolve();
 
   // Write locks to prevent concurrent writes to the same file
   private writeLocks: Map<string, Promise<void>> = new Map();
@@ -35,6 +45,7 @@ export class FileStorageAdapter implements StorageAdapter {
     this.maxSnapshots = maxSnapshots;
     this.snapshotDir = path.join(basePath, 'snapshots');
     this.deltaDir = path.join(basePath, 'deltas');
+    this.refsIndexPath = path.join(basePath, 'bucket-refs-index.json');
     this.bucketStore = new FrameBucketStore({
       storageDir: basePath,
       bucketSize: 100  // 100 frames per bucket
@@ -96,6 +107,14 @@ export class FileStorageAdapter implements StorageAdapter {
       await promisify(fs.rename)(tempPath, filepath);
       
       console.log(`[FileStorageAdapter] Saved snapshot ${filename} (${frameHistory.length} frames in ${snapshot.veilState.frameBucketRefs?.length || 0} buckets)`);
+
+      // Keep the bucket-refs index current so restore never needs to scan
+      // the snapshot corpus for refs. Failure is non-fatal (index self-heals).
+      if (snapshot.veilState.frameBucketRefs?.length) {
+        this.mergeIntoRefsIndex(snapshot.veilState.frameBucketRefs).catch((err) =>
+          console.warn('[FileStorageAdapter] Failed to update bucket-refs index:', err)
+        );
+      }
       
       // NOTE: Snapshot/delta/bucket cleanup is implemented but disabled.
       // Snapshots are now bounded (~9MB vs 144MB) so disk growth is manageable.
@@ -486,10 +505,146 @@ export class FileStorageAdapter implements StorageAdapter {
     }
   }
   
+  // -------------------------------------------------------------------------
+  // Bucket-refs index
+  // -------------------------------------------------------------------------
+
+  /** Load the refs index. Returns null when missing or unreadable. */
+  private async loadRefsIndex(): Promise<Map<string, FrameBucketRef> | null> {
+    try {
+      const data = await readFile(this.refsIndexPath, 'utf-8');
+      const parsed = JSON.parse(data);
+      const refs: FrameBucketRef[] = Array.isArray(parsed) ? parsed : parsed?.refs;
+      if (!Array.isArray(refs)) return null;
+      const map = new Map<string, FrameBucketRef>();
+      for (const ref of refs) {
+        if (ref?.hash) map.set(ref.hash, ref);
+      }
+      return map;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Atomically write the refs index (tmp + rename). */
+  private async writeRefsIndex(refs: Map<string, FrameBucketRef>): Promise<void> {
+    const tempPath = this.refsIndexPath + '.tmp';
+    const payload = JSON.stringify({ version: 1, refs: Array.from(refs.values()) });
+    await writeFile(tempPath, payload);
+    await promisify(fs.rename)(tempPath, this.refsIndexPath);
+  }
+
+  /**
+   * Merge refs into the index (read-modify-write, serialized). An incoming
+   * ref only replaces an existing entry when it adds streamIds metadata —
+   * enrichment never regresses.
+   */
+  private mergeIntoRefsIndex(newRefs: FrameBucketRef[]): Promise<void> {
+    const run = this.refsIndexLock.then(async () => {
+      const index = (await this.loadRefsIndex()) ?? new Map<string, FrameBucketRef>();
+      let changed = false;
+      for (const ref of newRefs) {
+        if (!ref?.hash) continue;
+        const existing = index.get(ref.hash);
+        if (!existing || (!existing.streamIds && ref.streamIds)) {
+          index.set(ref.hash, ref);
+          changed = true;
+        }
+      }
+      if (changed) await this.writeRefsIndex(index);
+    });
+    // Keep the chain alive even on failure
+    this.refsIndexLock = run.catch(() => {});
+    return run;
+  }
+
+  /**
+   * Derive streamIds for refs that lack them, from frames already loaded.
+   * Mirrors createBuckets semantics: only streams with message-bearing
+   * frames count. Refs whose range was fully loaded get streamIds set
+   * (possibly []), so future backfills can skip them instead of loading
+   * them speculatively.
+   */
+  private enrichRefsWithStreamIds(refs: FrameBucketRef[], frames: Frame[]): FrameBucketRef[] {
+    const MESSAGE_TYPES = new Set(['event', 'speech', 'thought', 'action']);
+    const targets = refs.filter(r => !r.streamIds).sort((a, b) => a.startSequence - b.startSequence);
+    if (targets.length === 0) return [];
+
+    const streamSets = new Map<string, Set<string>>();
+    for (const frame of frames) {
+      // Binary search for the ref whose [startSequence, endSequence] contains this frame
+      let lo = 0, hi = targets.length - 1, hit: FrameBucketRef | undefined;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const t = targets[mid];
+        if (frame.sequence < t.startSequence) hi = mid - 1;
+        else if (frame.sequence > t.endSequence) lo = mid + 1;
+        else { hit = t; break; }
+      }
+      if (!hit) continue;
+      const sid = frame.activeStream?.streamId;
+      if (!sid) continue;
+      const isMessage = (frame.deltas || []).some(
+        (d: any) => d.type === 'addFacet' && d.facet && MESSAGE_TYPES.has(d.facet.type)
+      );
+      if (!isMessage) continue;
+      let set = streamSets.get(hit.hash);
+      if (!set) { set = new Set(); streamSets.set(hit.hash, set); }
+      set.add(sid);
+    }
+
+    const enriched: FrameBucketRef[] = [];
+    for (const ref of targets) {
+      enriched.push({ ...ref, streamIds: [...(streamSets.get(ref.hash) ?? [])] });
+    }
+    return enriched;
+  }
+
+  /**
+   * Legacy ref discovery: parse every snapshot on disk for frameBucketRefs.
+   * Slow (reads the whole snapshot corpus) — only used when the refs index
+   * is missing, after which the index is written and this never runs again.
+   */
+  private async scanSnapshotsForRefs(): Promise<Map<string, FrameBucketRef>> {
+    const allRefs = new Map<string, FrameBucketRef>();
+    const files = await readdir(this.snapshotDir);
+    const snapshotFiles = files.filter(f =>
+      f.startsWith('snapshot-') && f.endsWith('.json') && !f.endsWith('.tmp')
+    );
+
+    // Modest parallelism — IO-bound reads, CPU-bound parses
+    const CHUNK = 8;
+    for (let i = 0; i < snapshotFiles.length; i += CHUNK) {
+      const chunk = snapshotFiles.slice(i, i + CHUNK);
+      await Promise.all(chunk.map(async (file) => {
+        try {
+          const data = await readFile(path.join(this.snapshotDir, file), 'utf-8');
+          const snapshot = JSON.parse(data);
+          const refs: FrameBucketRef[] = snapshot.veilState?.frameBucketRefs || [];
+          for (const ref of refs) {
+            if (ref.hash) {
+              const existing = allRefs.get(ref.hash);
+              if (!existing || (!existing.streamIds && ref.streamIds)) {
+                allRefs.set(ref.hash, ref);
+              }
+            }
+          }
+        } catch {
+          // Skip unreadable snapshots
+        }
+      }));
+      if (i % 64 === 0 && i > 0) {
+        console.log(`[FileStorageAdapter] Ref scan progress: ${i}/${snapshotFiles.length} snapshots`);
+      }
+    }
+    return allRefs;
+  }
+
   /**
    * Load frame history from ALL snapshots on disk, not just the latest.
-   * Collects bucket refs across all snapshots, deduplicates, and loads
-   * up to maxFrames (keeping the newest).
+   * Collects bucket refs (from the refs index when present, falling back to
+   * a one-time scan of all snapshots), deduplicates, and loads up to
+   * maxFrames (keeping the newest).
    *
    * When minFramesPerStream > 0, performs a two-pass load:
    *  1. Load newest maxFrames globally (existing behavior)
@@ -497,31 +652,27 @@ export class FileStorageAdapter implements StorageAdapter {
    *  3. Load additional older buckets that contain those streams
    */
   async loadFullFrameHistory(maxFrames: number, minFramesPerStream: number = 0): Promise<Frame[]> {
-    const allRefs = new Map<string, FrameBucketRef>();
+    let allRefs: Map<string, FrameBucketRef>;
 
-    try {
-      const files = await readdir(this.snapshotDir);
-      const snapshotFiles = files.filter(f =>
-        f.startsWith('snapshot-') && f.endsWith('.json') && !f.endsWith('.tmp')
-      );
-
-      for (const file of snapshotFiles) {
-        try {
-          const filepath = path.join(this.snapshotDir, file);
-          const data = await readFile(filepath, 'utf-8');
-          const snapshot = JSON.parse(data);
-          const refs: FrameBucketRef[] = snapshot.veilState?.frameBucketRefs || [];
-          for (const ref of refs) {
-            if (ref.hash && !allRefs.has(ref.hash)) {
-              allRefs.set(ref.hash, ref);
-            }
-          }
-        } catch {
-          // Skip unreadable snapshots
-        }
+    const indexed = await this.loadRefsIndex();
+    if (indexed && indexed.size > 0) {
+      allRefs = indexed;
+      console.log(`[FileStorageAdapter] Loaded ${allRefs.size} bucket refs from index (skipped snapshot scan)`);
+    } else {
+      console.log('[FileStorageAdapter] No bucket-refs index — scanning all snapshots once to build it');
+      const started = Date.now();
+      try {
+        allRefs = await this.scanSnapshotsForRefs();
+      } catch {
+        return [];
       }
-    } catch {
-      return [];
+      console.log(`[FileStorageAdapter] Ref scan complete: ${allRefs.size} refs in ${((Date.now() - started) / 1000).toFixed(1)}s`);
+      // Self-heal: write the index so this scan never happens again
+      try {
+        await this.mergeIntoRefsIndex(Array.from(allRefs.values()));
+      } catch (err) {
+        console.warn('[FileStorageAdapter] Failed to write bucket-refs index:', err);
+      }
     }
 
     if (allRefs.size === 0) return [];
@@ -530,7 +681,14 @@ export class FileStorageAdapter implements StorageAdapter {
     const sortedRefs = Array.from(allRefs.values())
       .sort((a, b) => a.startSequence - b.startSequence);
 
-    // Pass 1: Select refs to load (keep newest up to maxFrames)
+    // Pass 1: Select refs to load (keep newest up to maxFrames).
+    //
+    // Budget by UNIQUE sequence coverage, not raw frameCount: every snapshot
+    // re-buckets the trailing in-memory history at a shifted offset, so the
+    // ref set contains many overlapping buckets covering the same sequences.
+    // Counting duplicates against the budget silently halves the restored
+    // history (observed: 50k budget → 25k unique frames). Fully-covered
+    // buckets are skipped outright — they'd contribute nothing after dedup.
     const totalAvailable = sortedRefs.reduce((sum, ref) => sum + ref.frameCount, 0);
     const loadedRefHashes = new Set<string>();
     let refsToLoad: FrameBucketRef[];
@@ -538,11 +696,44 @@ export class FileStorageAdapter implements StorageAdapter {
       refsToLoad = sortedRefs;
     } else {
       refsToLoad = [];
-      let accumulated = 0;
+      // Merged, sorted list of covered [start, end] sequence intervals
+      const covered: Array<[number, number]> = [];
+      const uncoveredCount = (s: number, e: number): number => {
+        let count = e - s + 1;
+        for (const [cs, ce] of covered) {
+          const os = Math.max(s, cs);
+          const oe = Math.min(e, ce);
+          if (os <= oe) count -= oe - os + 1;
+        }
+        return Math.max(0, count);
+      };
+      const addInterval = (s: number, e: number): void => {
+        covered.push([s, e]);
+        covered.sort((a, b) => a[0] - b[0]);
+        // Merge overlapping/adjacent intervals in place
+        for (let i = covered.length - 1; i > 0; i--) {
+          if (covered[i][0] <= covered[i - 1][1] + 1) {
+            covered[i - 1][1] = Math.max(covered[i - 1][1], covered[i][1]);
+            covered.splice(i, 1);
+          }
+        }
+      };
+      let uniqueAccumulated = 0;
+      let skippedDuplicates = 0;
       for (let i = sortedRefs.length - 1; i >= 0; i--) {
-        refsToLoad.unshift(sortedRefs[i]);
-        accumulated += sortedRefs[i].frameCount;
-        if (accumulated >= maxFrames) break;
+        const ref = sortedRefs[i];
+        const fresh = uncoveredCount(ref.startSequence, ref.endSequence);
+        if (fresh === 0) {
+          skippedDuplicates++;
+          continue; // fully-overlapping duplicate bucket
+        }
+        refsToLoad.unshift(ref);
+        addInterval(ref.startSequence, ref.endSequence);
+        uniqueAccumulated += fresh;
+        if (uniqueAccumulated >= maxFrames) break;
+      }
+      if (skippedDuplicates > 0) {
+        console.log(`[FileStorageAdapter] Skipped ${skippedDuplicates} fully-overlapping duplicate buckets (unique coverage: ${uniqueAccumulated} frames)`);
       }
     }
     for (const ref of refsToLoad) loadedRefHashes.add(ref.hash);
@@ -550,6 +741,15 @@ export class FileStorageAdapter implements StorageAdapter {
     console.log(`[FileStorageAdapter] Loading full frame history: ${refsToLoad.length} buckets from ${allRefs.size} unique across all snapshots`);
 
     let frames = await this.bucketStore.loadFrames(refsToLoad);
+
+    // Enrich old-format refs we just loaded with streamIds so future
+    // backfills can target instead of loading speculatively.
+    {
+      const enriched = this.enrichRefsWithStreamIds(refsToLoad, frames);
+      if (enriched.length > 0) {
+        this.mergeIntoRefsIndex(enriched).catch(() => {});
+      }
+    }
 
     // Pass 2: Per-stream backfill — load older buckets for streams below minimum
     if (minFramesPerStream > 0) {
@@ -604,49 +804,78 @@ export class FileStorageAdapter implements StorageAdapter {
         }
 
         if (backfillRefs.length > 0) {
-          console.log(`[FileStorageAdapter] Per-stream backfill: ${deficientStreams.size} streams below min ${minFramesPerStream}, loading ${backfillRefs.length} older buckets`);
-          const backfillFrames = await this.bucketStore.loadFrames(backfillRefs);
+          console.log(`[FileStorageAdapter] Per-stream backfill: ${deficientStreams.size} streams below min ${minFramesPerStream}, ${backfillRefs.length} candidate older buckets`);
 
-          // Sort newest-first so we keep the most recent history per stream
-          backfillFrames.sort((a, b) => b.sequence - a.sequence);
-
-          // First pass: discover any new streams in old-format buckets that weren't
-          // in the initial load or in streamIds metadata. Add them to deficientStreams.
-          for (const frame of backfillFrames) {
-            const sid = frame.activeStream?.streamId;
-            if (!sid || streamCounts.has(sid) || deficientStreams.has(sid)) continue;
-            for (const delta of frame.deltas || []) {
-              if (delta.type === 'addFacet' && delta.facet && MESSAGE_TYPES.has((delta.facet as any).type)) {
-                deficientStreams.add(sid);
-                break;
-              }
-            }
-          }
-
-          // Second pass: keep message frames from deficient streams (newest first)
+          // Load newest-first in chunks and stop as soon as every deficient
+          // stream reaches its minimum — the old code loaded ALL candidate
+          // buckets up front (observed: 6k buckets / 44s to keep 1.3k frames).
+          backfillRefs.sort((a, b) => b.endSequence - a.endSequence);
+          const CHUNK = 256;
           let kept = 0;
-          for (const frame of backfillFrames) {
-            const sid = frame.activeStream?.streamId;
-            if (!sid || !deficientStreams.has(sid)) continue;
+          let loadedBuckets = 0;
 
-            let isMessage = false;
-            for (const delta of frame.deltas || []) {
-              if (delta.type === 'addFacet' && delta.facet && MESSAGE_TYPES.has((delta.facet as any).type)) {
-                isMessage = true;
-                break;
+          let candidates = backfillRefs;
+          while (candidates.length > 0 && deficientStreams.size > 0) {
+            const chunkRefs = candidates.slice(0, CHUNK);
+            candidates = candidates.slice(CHUNK);
+            const chunkFrames = await this.bucketStore.loadFrames(chunkRefs);
+            loadedBuckets += chunkRefs.length;
+
+            // Enrich speculative (old-format) refs with the streamIds we just
+            // discovered — the expensive speculative load happens at most once.
+            const enriched = this.enrichRefsWithStreamIds(chunkRefs, chunkFrames);
+            if (enriched.length > 0) {
+              this.mergeIntoRefsIndex(enriched).catch(() => {});
+            }
+
+            // Sort newest-first so we keep the most recent history per stream
+            chunkFrames.sort((a, b) => b.sequence - a.sequence);
+
+            // First pass: discover any new streams in old-format buckets that weren't
+            // in the initial load or in streamIds metadata. Add them to deficientStreams.
+            for (const frame of chunkFrames) {
+              const sid = frame.activeStream?.streamId;
+              if (!sid || streamCounts.has(sid) || deficientStreams.has(sid)) continue;
+              for (const delta of frame.deltas || []) {
+                if (delta.type === 'addFacet' && delta.facet && MESSAGE_TYPES.has((delta.facet as any).type)) {
+                  deficientStreams.add(sid);
+                  break;
+                }
               }
             }
-            if (!isMessage) continue;
 
-            frames.push(frame);
-            kept++;
-            const newCount = (streamCounts.get(sid) || 0) + 1;
-            streamCounts.set(sid, newCount);
-            if (newCount >= minFramesPerStream) {
-              deficientStreams.delete(sid);
+            // Second pass: keep message frames from deficient streams (newest first)
+            for (const frame of chunkFrames) {
+              const sid = frame.activeStream?.streamId;
+              if (!sid || !deficientStreams.has(sid)) continue;
+
+              let isMessage = false;
+              for (const delta of frame.deltas || []) {
+                if (delta.type === 'addFacet' && delta.facet && MESSAGE_TYPES.has((delta.facet as any).type)) {
+                  isMessage = true;
+                  break;
+                }
+              }
+              if (!isMessage) continue;
+
+              frames.push(frame);
+              kept++;
+              const newCount = (streamCounts.get(sid) || 0) + 1;
+              streamCounts.set(sid, newCount);
+              if (newCount >= minFramesPerStream) {
+                deficientStreams.delete(sid);
+              }
             }
+
+            // Re-filter remaining candidates: drop buckets that no longer
+            // contain any still-deficient stream. Streams that can never
+            // reach the minimum (too few frames in existence) would other-
+            // wise force a full walk of every candidate bucket.
+            candidates = candidates.filter(
+              r => !r.streamIds || r.streamIds.some(sid => deficientStreams.has(sid))
+            );
           }
-          console.log(`[FileStorageAdapter] Per-stream backfill: kept ${kept} message frames, ${deficientStreams.size} streams still below min`);
+          console.log(`[FileStorageAdapter] Per-stream backfill: kept ${kept} message frames from ${loadedBuckets}/${backfillRefs.length} buckets, ${deficientStreams.size} streams still below min`);
         }
       }
     }
