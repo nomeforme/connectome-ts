@@ -28,6 +28,24 @@ export interface GrpcServerOptions extends ConnectomeServerConfig {
 let serverStartTime: number = 0;
 
 /**
+ * Default frame budget for the activation-time context pre-render.
+ * Overridable globally via env, and per-activation via the
+ * `maxContextFrames` metadata key (set by axon `!mcf` commands).
+ * Clamped to [MIN, MAX] to protect the gRPC frame limit and render cost.
+ */
+const ACTIVATION_CONTEXT_MAX_FRAMES = parseInt(process.env.ACTIVATION_CONTEXT_MAX_FRAMES || '400', 10) || 400;
+const ACTIVATION_CONTEXT_MIN_FRAMES_CLAMP = 10;
+const ACTIVATION_CONTEXT_MAX_FRAMES_CLAMP = 2000;
+
+/** Resolve the frame budget for one activation: metadata override → env default, clamped. */
+function resolveActivationMaxFrames(metadata: Record<string, string> | undefined): number {
+  const raw = metadata?.maxContextFrames;
+  const parsed = raw !== undefined ? parseInt(raw, 10) : NaN;
+  const chosen = Number.isFinite(parsed) && parsed > 0 ? parsed : ACTIVATION_CONTEXT_MAX_FRAMES;
+  return Math.min(ACTIVATION_CONTEXT_MAX_FRAMES_CLAMP, Math.max(ACTIVATION_CONTEXT_MIN_FRAMES_CLAMP, chosen));
+}
+
+/**
  * Create and configure the gRPC server with Connectome handlers
  */
 export function createGrpcServer(options: GrpcServerOptions): ConnectomeServer {
@@ -300,13 +318,19 @@ export function createGrpcServer(options: GrpcServerOptions): ConnectomeServer {
       });
 
       // 2. rendered-context facet (render context for the agent)
+      // agentName fallback: registeredAgents is in-memory and wiped on server
+      // restart; axon gRPC channels auto-reconnect WITHOUT re-registering.
+      // A registry miss must not corrupt speech-role attribution (own speech
+      // demotes to user role and bots lose their identity in context), so
+      // fall back to the activation's targetBot metadata — that IS the name.
       const agent = registeredAgents.get(agentId);
+      const activationMaxFrames = resolveActivationMaxFrames(metadata);
       try {
         const contextResult = await contextHandler.handleGetContext({
           agentId,
-          agentName: agent?.agentName || '',
+          agentName: agent?.agentName || metadata?.targetBot || '',
           streamId,
-          maxFrames: 100,
+          maxFrames: activationMaxFrames,
           maxTokens: 200000,
           facetTypes: []
         });
@@ -327,7 +351,7 @@ export function createGrpcServer(options: GrpcServerOptions): ConnectomeServer {
           }
         });
 
-        console.log(`[GrpcServer] Activation ${activationId}: ${contextResult.tokenCount} tokens context`);
+        console.log(`[GrpcServer] Activation ${activationId}: ${contextResult.tokenCount} tokens context (maxFrames=${activationMaxFrames}${metadata?.maxContextFrames ? ', from !mcf override' : ''})`);
       } catch (err: any) {
         console.error(`[GrpcServer] Failed to render context for activation ${activationId}: ${err.message}`);
       }
